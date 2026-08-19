@@ -23,6 +23,7 @@ Banto Business は Banto を**同梱（vendoring）**して派生している（
 | 派生日 | 2026-08-19 |
 | 最終マージ確認日 | 2026-08-19 |
 | 最終マージ確認時の Banto HEAD | `f471ff1`（差分なし） |
+| 派生後の動作確認 | 2026-08-19 Windows 実機で `tauri dev` 起動確認済み。CI は ubuntu / windows 双方 green |
 
 派生時の `Initial commit` は `tyaro/banto` の `f471ff1` と **tree ハッシュが完全一致**する（`80eb3a2fc2108eafb22aef6cdcc14208397459c7`）。以降の Banto 側差分は `git diff f471ff1..<新しいコミット>` で機械的に取れる。
 
