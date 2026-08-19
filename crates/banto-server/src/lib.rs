@@ -1,0 +1,39 @@
+//! Banto server: embedded HTTP server for LAN browser access (spec §11).
+//!
+//! Domain-agnostic only: auth/token management, CSRF header enforcement,
+//! baseline security response headers, SSE event fan-out, static/SPA
+//! fallback serving, server lifecycle (bind/serve/graceful-shutdown), plus
+//! (since theme C PR-C4, docs/template-scope.md §7 移行順 ④) the REST
+//! routers for the resources that are themselves domain-agnostic
+//! ([`routes`]: auth extras, users, audit-log, backups, ui-settings, backed
+//! by `banto-admin-services`). Anything that knows about a specific APP
+//! resource (`items`, `attachments`) or the frontend build's on-disk
+//! location lives in the app crate (`apps/admin-template/core`), which
+//! composes these pieces via [`auth::auth_routes`], [`events::sse_route`],
+//! [`routes`], [`static_files::static_router`], [`response::ApiError`] and
+//! [`security_headers::with_security_headers`].
+//!
+//! Every router built here stays `Router<()>` (no shared `axum::State`):
+//! handlers close over their state (`AuthState`, `broadcast::Sender`, ...)
+//! instead, so routers from different modules merge without state-type
+//! conflicts.
+
+pub mod auth;
+pub mod csrf;
+pub mod events;
+pub mod response;
+pub mod routes;
+pub mod security_headers;
+pub mod server;
+pub mod static_files;
+
+pub use auth::{
+    auth_routes, rate_limit_key, require_auth, AuthState, Identity, LoginOutcome, RateLimitPolicy,
+    TokenPolicy,
+};
+pub use csrf::require_banto_client_header;
+pub use events::{sse_route, ServerEvent};
+pub use response::ApiError;
+pub use security_headers::with_security_headers;
+pub use server::{lan_urls, start, RunningServer, ServerConfig};
+pub use static_files::{guess_mime, static_router, UiAssets};

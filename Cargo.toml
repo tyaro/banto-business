@@ -1,0 +1,64 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/banto-core",
+  "crates/banto-storage",
+  "crates/banto-server",
+  "crates/banto-attachments",
+  "crates/banto-admin-services",
+  "apps/admin-template/core",
+  "apps/admin-template/src-tauri",
+]
+
+[workspace.package]
+version = "1.2.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/tyaro/banto"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+sqlx = { version = "0.8", default-features = false }
+tokio = { version = "1" }
+axum = { version = "0.8", default-features = true, features = ["json"] }
+tower = "0.5"
+uuid = { version = "1", features = ["v4"] }
+rust-embed = "8"
+if-addrs = "0.13"
+futures-util = "0.3"
+async-stream = "0.3"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+argon2 = "0.5"
+password-hash = { version = "0.5", features = ["getrandom"] }
+# Desktop-only (spec M11 autologin): OS keyring storage for the auto-login
+# credential. Deliberately only referenced from `apps/admin-template/src-tauri`
+# (NOT `admin-template-core`) - CI's headless containers cannot build
+# `src-tauri` (no webkit2gtk) but must still be able to `cargo test` every
+# other crate, so keeping this off the core crate's dependency graph keeps
+# that path unaffected by this addition.
+keyring = { version = "3", features = ["windows-native", "apple-native", "sync-secret-service"] }
+# Desktop-only (spec M12 Glass theme): real window translucency (Windows
+# Acrylic) behind the glass theme preset. Referenced only from
+# `apps/admin-template/src-tauri`, and there only as a
+# Windows-target-specific dependency (docs/roadmap.md §6: Windows のみ) -
+# same CI reasoning as `keyring` above.
+window-vibrancy = "0.8"
+# Dev-only (spec M17 backup/restore tests): isolated temp directories so
+# `BackupService`'s filesystem-touching tests (create/list/read a real
+# `backups/` dir, stage a pending restore file) never collide with each
+# other or leave litter behind - `std::env::temp_dir()` alone is not enough
+# since tests run concurrently and would otherwise share one directory.
+tempfile = "3"
+# M20 attachments (spec docs/attachments-plan.md §3.4): sha256 of uploaded
+# bytes for integrity checking / future dedup. Was already present
+# transitively (via sqlx et al.); promoted to a direct dependency because
+# `banto-attachments` calls it explicitly rather than relying on whatever
+# version its transitive dependents happen to pull in.
+sha2 = "0.11"
+banto-core = { path = "crates/banto-core" }
+banto-storage = { path = "crates/banto-storage" }
+banto-server = { path = "crates/banto-server" }
+banto-attachments = { path = "crates/banto-attachments" }
+banto-admin-services = { path = "crates/banto-admin-services" }

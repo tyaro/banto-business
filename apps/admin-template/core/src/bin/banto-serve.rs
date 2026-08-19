@@ -1,0 +1,207 @@
+//! Standalone dev server for the embedded-server milestone (spec §11): runs
+//! the full REST + static stack WITHOUT Tauri, so it can be exercised in
+//! any environment - including this repo's containers, which cannot build
+//! the `src-tauri` crate because they lack webkit2gtk. This is also a
+//! user-facing way to preview LAN mode before the settings-screen toggle
+//! (Phase B) wires it into the Tauri app itself.
+//!
+//! This binary always builds (bins cannot be feature-gated the way a
+//! library module can); whether it serves the real frontend or the
+//! built-in placeholder page depends on the `embed-ui` feature on
+//! `admin_template_core::assets::FrontendAssets`, which is applied
+//! internally - this file does not need its own `#[cfg(feature = ...)]`.
+//!
+//! ```text
+//! pnpm --filter admin-template build   # produces apps/admin-template/build
+//! cargo run -p admin-template-core --bin banto-serve --features embed-ui
+//! ```
+//!
+//! (Omit `--features embed-ui` to serve the built-in placeholder page
+//! instead of the real frontend build - useful for exercising the REST API
+//! alone.)
+//!
+//! Env vars: `PORT` (default `8721`), `BANTO_BIND` (default `0.0.0.0`, so
+//! the LAN-access URLs printed at startup are actually reachable - the
+//! Tauri app's default of `127.0.0.1`-only is a setting applied at the
+//! settings-screen layer, Phase B, not a property of this dev vehicle),
+//! `BANTO_DB` (default `./banto-dev.sqlite3`; a `postgres://`/`postgresql://`
+//! URL selects the PostgreSQL backend instead of a SQLite file - the binary
+//! must be built `--features postgres` for that to link), `BANTO_ALLOW_SETUP` (`1` to
+//! enable `POST /api/auth/setup`; unset/anything else keeps it `403`'d, spec
+//! §8.2 - the Tauri app never sets this, since desktop first-run goes
+//! through the `auth_setup` command instead).
+
+use admin_template_core::assets::FrontendAssets;
+use admin_template_core::audit::{AuditEntry, AuditLogService};
+use admin_template_core::backup::BackupService;
+use admin_template_core::db::{init_db_from_target, is_postgres_url};
+use admin_template_core::events::event_channel;
+use admin_template_core::items::ItemsService;
+use admin_template_core::rest::{api_router, audited_credential_verifier, Services};
+use admin_template_core::settings::SettingsService;
+use admin_template_core::system_info::SystemInfoService;
+use admin_template_core::users::UsersService;
+use banto_attachments::AttachmentsService;
+use banto_server::{
+    lan_urls, start, static_router, with_security_headers, AuthState, ServerConfig,
+};
+use std::path::PathBuf;
+
+const DEFAULT_PORT: u16 = 8721;
+const DEFAULT_BIND: &str = "0.0.0.0";
+const DEFAULT_DB_PATH: &str = "./banto-dev.sqlite3";
+
+#[tokio::main]
+async fn main() {
+    let port: u16 = std::env::var("PORT")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(DEFAULT_PORT);
+    let bind = std::env::var("BANTO_BIND").unwrap_or_else(|_| DEFAULT_BIND.to_string());
+    let db_path = std::env::var("BANTO_DB").unwrap_or_else(|_| DEFAULT_DB_PATH.to_string());
+    let allow_setup = std::env::var("BANTO_ALLOW_SETUP")
+        .map(|value| value == "1")
+        .unwrap_or(false);
+
+    let db_path_buf = PathBuf::from(&db_path);
+
+    // Apply any staged restore (spec M17) BEFORE `init_db`/the pool is
+    // created - see `BackupService::apply_pending_restore_at_startup`'s doc
+    // comment for why this must run first. Best-effort at the top level:
+    // a failure here must not prevent the server from starting at all (the
+    // old db, if any, is left untouched on error - see that function's
+    // per-step safety notes).
+    //
+    // V2 (backup owner decision D3): the startup restore is a SQLite-file-only
+    // concept. When `BANTO_DB` is a `postgres://`/`postgresql://` URL the whole
+    // backend is Postgres, so there is no db FILE to swap and `db_path` is a
+    // connection string, not a path - skip entirely rather than let it probe
+    // for a `restore-pending.sqlite3` next to a URL. The same
+    // `db::is_postgres_url` rule drives `init_db_from_target` below, so the two
+    // never disagree on which backend is in play.
+    let applied_restore = if is_postgres_url(&db_path) {
+        None
+    } else {
+        match BackupService::apply_pending_restore_at_startup(&db_path_buf).await {
+            Ok(applied) => applied,
+            Err(err) => {
+                eprintln!("banto-serve: 起動時のリストア適用に失敗しました: {err}");
+                None
+            }
+        }
+    };
+
+    // V2 PR3: `init_db_from_target` selects the backend from `BANTO_DB`'s
+    // value - a `postgres://`/`postgresql://` URL runs on PostgreSQL, anything
+    // else is a SQLite file path (the default). Either way it returns a
+    // backend-agnostic `banto_storage::Db`; every service constructor takes
+    // `Db`. (The staged-restore step above is SQLite-file-only; against a
+    // Postgres target `db_path_buf` simply names no pending-restore file.)
+    let db = init_db_from_target(&db_path)
+        .await
+        .expect("init_db should succeed");
+
+    let events = event_channel();
+    let items = ItemsService::new(db.clone()).with_events(events.clone());
+    let users = UsersService::new(db.clone());
+    let settings = SettingsService::new(db.clone());
+    let backup = BackupService::new(db_path_buf.clone(), db.clone());
+    // M20 attachments (spec docs/attachments-plan.md §3.3): base_dir is the
+    // DB's own parent directory (same sibling-directory convention as
+    // `backups/`), falling back to `.` if `db_path` has no parent (e.g. a
+    // bare relative file name).
+    let attachments_base_dir = db_path_buf
+        .parent()
+        .map(|parent| parent.join("attachments"))
+        .unwrap_or_else(|| PathBuf::from("attachments"));
+    let attachments = AttachmentsService::new(db.clone(), attachments_base_dir);
+    let system_info = SystemInfoService::new(db.clone());
+    let audit = AuditLogService::new(db);
+    // Credential verifier from `admin_template_core::rest` (spec §8.2),
+    // backed by `UsersService`'s argon2id-hashed accounts - replaces the old
+    // fixed admin/admin check that used to live here directly. Also records
+    // `login`/`login_failed` audit entries (spec M14).
+    let auth = AuthState::new(audited_credential_verifier(users.clone(), audit.clone()));
+
+    // Spec M17: record `restore_applied` now that a real `AuditLogService`
+    // exists - `apply_pending_restore_at_startup` itself cannot do this (it
+    // runs before any pool/audit service exists at all).
+    if let Some(applied) = applied_restore {
+        audit
+            .record(AuditEntry {
+                actor_username: None,
+                actor_role: None,
+                action: "restore_applied",
+                resource: "backups",
+                entity_id: None,
+                detail: Some(serde_json::json!({
+                    "preRestoreBackupFileName": applied.pre_restore_backup_file_name,
+                })),
+                origin: "rest",
+                result: "ok",
+            })
+            .await;
+        println!(
+            "banto-serve: 起動時にリストアを適用しました（適用前の自動バックアップ: {}）",
+            applied.pre_restore_backup_file_name
+        );
+    }
+
+    // Startup prune (spec M14: "サーバ起動時に1回 + list実行時に軽く" - see
+    // `audit_log_list`'s doc comment in `rest.rs` for why no dedicated
+    // background task is needed beyond this plus that opportunistic prune).
+    // Best-effort: a prune failure here must not stop the server from
+    // starting.
+    match settings.audit_config().await {
+        Ok(config) => {
+            if let Err(err) = audit
+                .prune(config.retention_days, config.retention_rows)
+                .await
+            {
+                eprintln!("banto-serve: 起動時の監査ログの剪定に失敗しました: {err}");
+            }
+        }
+        Err(err) => eprintln!("banto-serve: 監査ログの保持設定の読み取りに失敗しました: {err}"),
+    }
+
+    // `with_security_headers` (spec improvements §2.4) wraps LAST/outermost
+    // so every response - static UI, `/api/*` JSON, and SSE alike - gets
+    // the baseline security headers, regardless of which inner router
+    // produced it.
+    let services = Services {
+        items,
+        users,
+        settings,
+        audit,
+        backup,
+        attachments,
+        system_info,
+    };
+    let app = with_security_headers(
+        api_router(services, auth, events, allow_setup).merge(static_router::<FrontendAssets>()),
+    );
+
+    let server = start(ServerConfig { bind, port }, app)
+        .await
+        .expect("server should start");
+
+    println!("banto-serve: DB at {db_path}");
+    println!("banto-serve: listening at:");
+    for url in lan_urls(server.local_addr().port()) {
+        println!("  {url}");
+    }
+    if allow_setup {
+        println!("banto-serve: first-run setup is ENABLED (BANTO_ALLOW_SETUP=1) - POST /api/auth/setup will create the first account");
+    } else {
+        println!(
+            "banto-serve: first-run setup is DISABLED - set BANTO_ALLOW_SETUP=1 to allow POST /api/auth/setup"
+        );
+    }
+    println!("banto-serve: press Ctrl-C to stop");
+
+    tokio::signal::ctrl_c()
+        .await
+        .expect("failed to listen for ctrl-c");
+    println!("banto-serve: shutting down");
+    server.stop().await;
+}

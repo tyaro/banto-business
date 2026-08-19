@@ -1,0 +1,45 @@
+{
+  "name": "banto",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Banto — full-stack admin framework/template for Tauri v2 + SvelteKit",
+  "type": "module",
+  "packageManager": "pnpm@10.33.0",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "@tauri-apps/cli"
+    ]
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "pnpm --filter admin-template dev",
+    "build": "pnpm --filter admin-template build",
+    "check": "pnpm --recursive --if-present check",
+    "test": "pnpm --recursive --if-present test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint .",
+    "scaffold": "node scripts/scaffold.mjs",
+    "verify:architecture": "node scripts/verify-architecture.mjs",
+    "check:versions": "node scripts/check-versions.mjs",
+    "e2e": "playwright test --config=e2e/playwright.config.ts --project=chromium",
+    "e2e:visual": "playwright test --config=e2e/playwright.config.ts --project=visual",
+    "bench": "pnpm --filter @banto/grid-svelte bench",
+    "test:rename": "node --test scripts/rename.test.mjs"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.12.1",
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.62.1",
+    "eslint": "^10.8.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-svelte": "^3.22.0",
+    "globals": "^17.9.0",
+    "prettier": "^3.9.6",
+    "prettier-plugin-svelte": "^4.1.1",
+    "typescript-eslint": "^8.66.0"
+  }
+}

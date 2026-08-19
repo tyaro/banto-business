@@ -1,0 +1,138 @@
+# Banto
+
+> This is an abridged English summary; the Japanese [README.md](README.md) is
+> canonical and much more complete.
+
+**Live demo**: <https://tyaro.github.io/banto/> (log in as `admin` / `admin` —
+a browser-only demo with in-memory data).
+
+Banto is a full-stack admin framework/template for **Tauri v2 + SvelteKit**
+(Svelte 5 runes). It pairs a refine-like headless core with a custom data
+grid, schema-driven forms, charts, and a docking layout. The backend is Rust
+(axum + sqlx; SQLite by default, PostgreSQL supported). It runs as a desktop
+app, and — via an embedded web
+server — can serve the same UI to browsers on the local network. The name
+comes from _banto_, the senior clerk who ran an Edo-period merchant house on
+the owner's behalf.
+
+## Features
+
+- **Data grid** (`@banto/grid-svelte`): virtual scrolling, multi-column sort,
+  column filters, column resize/reorder, Excel-like cell editing, range
+  selection, copy & paste, client and server modes, grouping with
+  aggregation. Columns can be **auto-derived from a form schema**
+  (`columnsFromSchema`, M23, validation included — write one schema and get
+  both the list view and the form).
+- **Schema-driven forms** (`@banto/forms`): input UI, validation, and state
+  management generated from a definition object.
+- **Charts** (`@banto/charts`): dependency-free SVG charts, 14 types in
+  total — line/area, bar (incl. stacked), pie/donut, scatter, sparkline,
+  combo (bar + line), radar, heatmap, gauge, SPC charts (histogram, Pareto,
+  box plot), stacked area, and Gantt.
+- **Docking layout** (`@banto/dock-svelte`): floating windows, split/tab
+  panes, drag-to-rearrange with snapping, layout persisted as JSON.
+- **Refine-like headless core** (`@banto/admin-core`): resource definitions,
+  `DataProvider`/`AuthProvider` abstractions, `createListResource`/
+  `createFormResource` composables. Defaults to Tauri `invoke()` (local
+  Rust), swappable for InMemory or HTTP.
+- **Embedded web server** (`banto-server`): opt-in; once enabled, other
+  devices on the same LAN can use the same admin UI in a browser over
+  REST + SSE. Ships a web manifest + icons so the browser build is an
+  **installable PWA** ("Add to Home Screen"), though — since browsers only
+  offer install over a secure context — that requires HTTPS/localhost or a
+  TLS reverse proxy, not the default plain-HTTP LAN. No service worker
+  (no offline mode).
+- **Auth, RBAC, and user management**: argon2id credential store with
+  first-run setup, three roles (admin/editor/viewer), a user management
+  screen, and identical permission checks across both the REST and Tauri
+  paths.
+- **Audit log**, a settings framework (`SettingsProvider`), and an
+  auto-login / no-login mode.
+- **CSV/Excel import & export**, a command palette (Ctrl+K), and SQLite
+  backup/restore.
+- **Toast notifications** with four kinds (info/success/warning/error) and a
+  server-pushed `Notice` event recipe (SSE), plus an admin-only **system info
+  card** (v1.2.0) on the settings page showing app version, DB backend, and
+  runtime form (`GET /api/system/info` / Tauri `system_info`).
+- **Databases: SQLite (default) and PostgreSQL.** V2 made the whole app
+  runnable on PostgreSQL too (`banto-storage`'s `Db`/`Dialect` dialect
+  abstraction plus per-dialect migrations); point `banto-serve`'s `BANTO_DB`
+  env var at a `postgres://` URL to use it (default is local SQLite).
+  Backup/restore is SQLite-only (PostgreSQL returns an explicit error).
+- Optional, removable extension packages: reporting/print
+  (`@banto/report`), attachment/image management (`@banto/attachments`),
+  barcode/QR scanner input (`@banto/scan-wedge`), and a **tree view**
+  (`@banto/tree-svelte`: expand/collapse, single/multi selection with tri-state
+  checkboxes, lazy loading, drag reorder, inline rename, an optional tree-grid
+  columns mode, and a tree-select popover). report/attachments/tree-svelte ship
+  with deletable demo wiring (the tree view is the sidebar "Tree view" = `/tree`
+  demo, reachable on the live demo too); scan-wedge is recipe-only (not wired
+  into the demo app). Per-package integration recipes live under
+  [docs/recipes/](docs/recipes/) (scan-wedge, notifications, tree-svelte).
+
+## Quick start
+
+Requirements: Node 24+ / pnpm 10+ (Rust too, only if running as a Tauri
+desktop app).
+
+```sh
+git clone https://github.com/tyaro/banto.git my-app
+cd my-app
+pnpm install
+pnpm dev        # http://localhost:1420 (standalone browser demo, log in as admin / admin)
+```
+
+Once it's running, there are three files to edit next (see
+[docs/recipes/add-resource.md](docs/recipes/add-resource.md) for the full
+walkthrough):
+
+1. `apps/admin-template/src/lib/banto/resources/items.ts` — resource
+   definition and schema
+2. `apps/admin-template/core/migrations-sqlite/0001_items.sql` — table
+   definition (PostgreSQL version in `migrations-postgres/0001_items.sql`)
+3. `apps/admin-template/core/src/items.rs` — service layer (CRUD)
+
+To turn this template into your own app (rename identifiers, replace the
+demo resource, drop unused packages), run the rename script:
+
+```sh
+node scripts/rename.mjs \
+  --name my-app \
+  --title "My App" \
+  --identifier com.example.myapp \
+  --repo https://github.com/me/my-app   # optional
+# add --dry-run to preview the changes first
+```
+
+To drop the optional assets (dock layout, charts, glass theme, command
+palette, attachments, reporting) as a batch, run the scaffold script and pick
+a preset:
+
+```sh
+pnpm scaffold --preset minimal   # minimal | standard | full
+# --interactive to choose per asset, --dry-run to preview the changes
+```
+
+For assets scaffold doesn't touch, or to remove things by hand, see the
+"オプション資産の削除" section in the Japanese README
+(`pnpm scaffold --interactive` covers most of it without reading Japanese).
+
+## Security note
+
+The LAN server is plain HTTP by default — enable it only on trusted
+networks. See the Japanese README for the TLS reverse-proxy recipe
+(Caddy example under "LANアクセス").
+
+Session tokens are held in memory, so restarting the server (the desktop app
+/ resident process) drops every session and forces a re-login. The 30-day /
+7-day "Remember me" limits are upper bounds under uninterrupted operation; on
+a device rebooted daily the session ends each time (an accepted v1 tradeoff).
+
+---
+
+Full documentation is in Japanese: see [README.md](README.md). Maintainer
+docs live under [docs/](docs/), AI agent guide in [AGENTS.md](AGENTS.md).
+
+## License
+
+[MIT](LICENSE)
