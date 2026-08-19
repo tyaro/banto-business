@@ -70,6 +70,8 @@ Banto の `crates/*` と `packages/*` は **このリポジトリ内に同梱**�
 | `Cargo.toml` | `workspace.package.repository` | `workspace.package.version`（`1.2.0`）は派生元の値のまま。上流に追随する |
 | `.github/workflows/ci.yml` | i18n ジョブの `--filter` 参照（`rename.mjs` が書き換え漏れした箇所） | 名称の行のみ Business 固有 |
 | `README.md` | 冒頭に Business 向けの案内ブロックを追加（本文は Banto の原文のまま） | 追加ブロックより下は上流差分をそのまま適用してよい |
+| `.gitignore` | 末尾に業務データ（`*.sqlite3` / `backups/` / `attachments/`）の除外を追加 | 公開リポジトリのため必須。上流差分適用時に消さない |
+| `.claude/launch.json` | 作業ディレクトリを `D:\develop\banto` → `D:\develop\banto-business` に修正 | 上流の設定変更は取り込んでよいが、パスは Business のものを維持 |
 | `CLAUDE.md` / `AGENTS.md` / `docs/plan.md` ほか Business ドキュメント | Business 固有（テンプレート由来ではない） | 差分確認の対象外 |
 
 上記以外は**未改変**なので、上流差分をそのまま適用してよい。
