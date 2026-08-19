@@ -2,7 +2,7 @@
 
 Banto Business の開発中に見つかった Banto 本体への課題を記録する。
 
-**記録開始：Phase 2**
+**記録開始：Phase 2**（ただし Phase 0/1 でも Banto 由来の摩擦に気づいた時点で記録する。「後でまとめない」原則を優先）
 
 ---
 
@@ -53,6 +53,34 @@ Banto Business の開発中に見つかった Banto 本体への課題を記録�
 
 -->
 
+### [2026-08-19] Phase 0 — `rename.mjs` が CI ワークフロー内の `--filter <旧アプリ名>` を書き換えない
+
+| 項目 | 内容 |
+|---|---|
+| 事象 | `scripts/rename.mjs` はルート `package.json` と `e2e/playwright.config.ts` の `--filter admin-template` は追随させるが、`.github/workflows/ci.yml` の i18n ジョブにある `pnpm --filter admin-template paraglide:compile` を書き換えない。リネーム直後の派生リポジトリは CI がその1ジョブで落ちる |
+| 影響 | Phase 0 の最初の CI が失敗する。原因がリネーム漏れだと気づくまで時間を取られる（スクリプトは「✔ 書き換えました」と成功報告するため、漏れが見えない） |
+| 回避策 | `.github/workflows/ci.yml:110` を手動で `--filter banto-business-app` に修正。`docs/template-origin.md` の改変ファイル表に記録 |
+| 分類 | Banto共通（Industrial でも同じ導線を通れば同様に発生する） |
+| Banto Issue | 未起票 |
+| 状態 | 未対応 |
+
+> 補足：機能に影響しない箇所（`apps/admin-template/**` の Rust コメント、`e2e/visual/README.md`、`scripts/scaffold.mjs` の案内文言）にも旧アプリ名の例が残るが、こちらは上流差分を増やさないため意図的に未修正。
+
+---
+
+### [2026-08-19] Phase 0 — 派生元 main HEAD にタグが無く「タグ固定」が成立しない
+
+| 項目 | 内容 |
+|---|---|
+| 事象 | Banto のタグ運用規約は「破壊的変更時のみタグ更新」であり、派生時点の main HEAD（`f471ff1`）にタグが無い。直近タグ `v1.2.0` は 35 コミット前で、派生アプリに効く修正（issue #150 / ADR-0007 等）を含まない |
+| 影響 | Business 側の当初規約「Banto 依存は git タグで固定」（CLAUDE.md 第3章）がそのままでは満たせない |
+| 回避策 | 依存方式を「同梱＋派生元コミット固定」と決定し、CLAUDE.md 第3章と `docs/template-origin.md` を改訂 |
+| 分類 | Banto共通（消費側が最新の修正を固定参照したいときに毎回起きる） |
+| Banto Issue | 未起票 |
+| 状態 | 未対応（Banto 側で定期的にタグを打つ運用にすれば解消する） |
+
+---
+
 ### [記録例・削除可] Phase 2 — Grid の列幅がリソース定義から指定できない
 
 | 項目 | 内容 |
@@ -72,6 +100,7 @@ Banto Business の開発中に見つかった Banto 本体への課題を記録�
 
 | Phase | 記録件数 | うち Banto共通 | 主な傾向 |
 |---|---|---|---|
+| 0 | 2 | 2 | 派生（rename / バージョン固定）の導線に穴 |
 | 2 | 0 | 0 | |
 | 3 | 0 | 0 | |
 | 4 | 0 | 0 | |

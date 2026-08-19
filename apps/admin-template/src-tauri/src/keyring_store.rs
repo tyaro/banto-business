@@ -24,7 +24,7 @@ use banto_core::BantoError;
 /// the app's `--identifier` on the initial template→app rename so that
 /// multiple Banto-derived apps on the same OS user get separate keyring
 /// namespaces instead of colliding on one `(service, account)` (issue #147).
-const SERVICE_NAME: &str = "dev.banto.admin-template";
+const SERVICE_NAME: &str = "dev.banto.business";
 
 /// Turns any `keyring::Error` (backend missing, permission denied, no entry
 /// found, ...) into a `BantoError::Other` with a Japanese message, so callers

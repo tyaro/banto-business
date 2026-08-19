@@ -81,11 +81,11 @@ Attachments に保存する領収書は **案件紐付け用の参照コピー**
 
 ## 2. 責務境界
 
-| リポジトリ | 責務 |
-|---|---|
-| `banto` | フレームワーク：CRUD / Grid / Forms / Chart / Storage / Auth / RBAC / Report / Attachments / Backup / Server / 共通UI |
-| `banto-industrial` | 産業ドメイン：FA / PLC / SCADA / Tag Server |
-| `banto-business` | **このリポジトリ**：Customer / Project / WorkLog / Trip / Expense / Invoice / Payment / Profitability |
+| リポジトリ         | 責務                                                                                                                  |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| `banto`            | フレームワーク：CRUD / Grid / Forms / Chart / Storage / Auth / RBAC / Report / Attachments / Backup / Server / 共通UI |
+| `banto-industrial` | 産業ドメイン：FA / PLC / SCADA / Tag Server                                                                           |
+| `banto-business`   | **このリポジトリ**：Customer / Project / WorkLog / Trip / Expense / Invoice / Payment / Profitability                 |
 
 ### やってはいけないこと
 
@@ -98,9 +98,13 @@ Attachments に保存する領収書は **案件紐付け用の参照コピー**
 
 ## 3. Banto 依存のバージョン管理
 
-- Banto への依存は **git タグで固定**。`main` 追従は禁止
-- タグを上げる場合は動作確認後に更新し、理由をコミットメッセージに残す
-- テンプレート由来のボイラープレート（Tauri設定 / CI / ディレクトリ構成）は自動追従しない。取り込み判断を `docs/template-origin.md` に記録する
+**方式：同梱（vendoring）＋派生元コミット固定**（2026-08-19 Phase 0 決定。決定理由は `docs/template-origin.md`）
+
+- Banto の `crates/*` / `packages/*` は **このリポジトリに同梱**し、`path` 依存 / `workspace:*` で参照する。git タグ参照の薄い構成にはしない
+  - 理由：Banto 側 `docs/publishing.md` がタグ参照の対象を `@banto/*` / `banto-*` に限定し、アプリ本体（`admin-template-core` / `src-tauri`）は「リポジトリそのものをクローンして使う前提」と明記しているため
+- 固定単位は**タグではなく派生元コミット SHA**。現在の固定先は `docs/template-origin.md`「現在の派生状態」に記録する。`main` 追従（無検討の一括取り込み）は禁止
+- 上流を取り込む場合は、差分を確認 → 取り込む/見送る/保留を分類 → 動作確認 → `docs/template-origin.md` のマージ判断ログに記録、の順で行い、理由をコミットメッセージに残す
+- 同梱した Banto のコード（`crates/*` / `packages/*` / `apps/admin-template` のうち Banto 由来部分）を Business 都合で**書き換えない**。必要が生じたら `docs/banto-feedback.md` に記録して確認を取る（第2章）
 
 ---
 
