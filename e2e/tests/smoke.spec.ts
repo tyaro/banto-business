@@ -116,7 +116,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 
 		// Fresh DB -> AuthProvider.status() reports uninitialized -> the login
 		// page renders the setup form, not the login form (login/+page.svelte).
-		await expect(page.getByRole('heading', { name: 'Banto' })).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'Banto Business' })).toBeVisible();
 		await expect(page.getByLabel('表示名')).toBeVisible();
 
 		await page.getByLabel('表示名').fill(ADMIN_DISPLAY_NAME);

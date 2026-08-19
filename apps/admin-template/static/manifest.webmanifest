@@ -1,6 +1,6 @@
 {
-	"name": "Banto",
-	"short_name": "Banto",
+	"name": "Banto Business",
+	"short_name": "Banto Business",
 	"description": "Tauri + SvelteKit の管理画面テンプレート",
 	"lang": "ja",
 	"dir": "ltr",

@@ -36,7 +36,7 @@ test.describe('login', () => {
 				await page.setViewportSize(viewport);
 				await primeTheme(page, combo);
 				await page.goto('/login');
-				await expect(page.getByRole('heading', { name: 'Banto' })).toBeVisible();
+				await expect(page.getByRole('heading', { name: 'Banto Business' })).toBeVisible();
 				await expect(page.getByLabel('ユーザー名')).toBeVisible();
 				await page.waitForTimeout(SETTLE_MS);
 				await expect(page).toHaveScreenshot(

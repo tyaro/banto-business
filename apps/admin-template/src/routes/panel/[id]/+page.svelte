@@ -44,7 +44,7 @@
 </script>
 
 <svelte:head>
-	<title>{def?.title ?? id} - Banto</title>
+	<title>{def?.title ?? id} - Banto Business</title>
 </svelte:head>
 
 {#if authState === 'checking'}

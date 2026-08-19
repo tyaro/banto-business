@@ -27,7 +27,7 @@ const PAGES: ScannedPage[] = [
 	{ name: 'dashboard', path: '/dashboard', heading: 'ダッシュボード', authed: true },
 	{ name: 'items', path: '/items', heading: '商品', authed: true },
 	{ name: 'settings', path: '/settings', heading: '設定', authed: true },
-	{ name: 'login', path: '/login', heading: 'Banto', authed: false }
+	{ name: 'login', path: '/login', heading: 'Banto Business', authed: false }
 ];
 
 /** Readable failure message: rule id + impact + affected node selectors, so a CI failure is actionable without opening the HTML report. */

@@ -8,7 +8,7 @@
  *   SAME static build as `chromium`, but served by plain `vite preview`
  *   (browser demo mode - InMemory data + fixed admin/admin auth, spec
  *   §11.1's third environment) instead of `banto-serve`, so its screenshots
- *   never depend on a live SQLite backend. `pnpm --filter admin-template
+ *   never depend on a live SQLite backend. `pnpm --filter banto-business-app
  *   build` must run first here too - see visual/README.md.
  *
  * `webServer` is an array (Playwright starts every entry regardless of
@@ -176,7 +176,7 @@ export default defineConfig({
 			// ECONNREFUSED until the 30s webServer timeout kills the whole run.
 			// Pinning the bind address to the exact address being polled keeps
 			// the two sides agreeing everywhere.
-			command: `pnpm --filter admin-template preview --port ${VISUAL_PORT} --strictPort --host 127.0.0.1`,
+			command: `pnpm --filter banto-business-app preview --port ${VISUAL_PORT} --strictPort --host 127.0.0.1`,
 			cwd: repoRoot,
 			url: VISUAL_BASE_URL,
 			reuseExistingServer: !process.env.CI,
