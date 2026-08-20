@@ -2,6 +2,8 @@ use super::*;
 use crate::customers::CustomersService;
 use crate::db::migrate_memory;
 use crate::expenses::ExpensesService;
+use crate::invoices::InvoicesService;
+use crate::issuer::IssuerService;
 use crate::masters::MastersService;
 use crate::projects::ProjectsService;
 use crate::trips::TripsService;
@@ -78,6 +80,8 @@ async fn router_with_role_tokens() -> (Router, String, String, String) {
     let expenses = ExpensesService::new(pool.clone());
     let trips = TripsService::new(pool.clone());
     let profitability = ProfitabilityService::new(pool.clone());
+    let invoices = InvoicesService::new(pool.clone());
+    let issuer = IssuerService::new(SettingsService::new(pool.clone()));
     let (tx, _rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
     let users = UsersService::new(pool.clone());
@@ -136,6 +140,8 @@ async fn router_with_role_tokens() -> (Router, String, String, String) {
         expenses,
         trips,
         profitability,
+        invoices,
+        issuer,
         users,
         settings,
         audit,
@@ -160,6 +166,8 @@ async fn router_with_token() -> (Router, String) {
     let expenses = ExpensesService::new(pool.clone());
     let trips = TripsService::new(pool.clone());
     let profitability = ProfitabilityService::new(pool.clone());
+    let invoices = InvoicesService::new(pool.clone());
+    let issuer = IssuerService::new(SettingsService::new(pool.clone()));
     let (tx, _rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
     let users = UsersService::new(pool.clone());
@@ -182,6 +190,8 @@ async fn router_with_token() -> (Router, String) {
         expenses,
         trips,
         profitability,
+        invoices,
+        issuer,
         users,
         settings,
         audit,
@@ -391,6 +401,8 @@ async fn update_via_rest_is_observable_on_the_event_channel() {
     let expenses = ExpensesService::new(pool.clone());
     let trips = TripsService::new(pool.clone());
     let profitability = ProfitabilityService::new(pool.clone());
+    let invoices = InvoicesService::new(pool.clone());
+    let issuer = IssuerService::new(SettingsService::new(pool.clone()));
     let (tx, mut rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
     let users = UsersService::new(pool.clone());
@@ -410,6 +422,8 @@ async fn update_via_rest_is_observable_on_the_event_channel() {
         expenses,
         trips,
         profitability,
+        invoices,
+        issuer,
         users,
         settings,
         audit,
@@ -479,6 +493,8 @@ async fn router_with_setup(allow_setup: bool) -> Router {
     let expenses = ExpensesService::new(pool.clone());
     let trips = TripsService::new(pool.clone());
     let profitability = ProfitabilityService::new(pool.clone());
+    let invoices = InvoicesService::new(pool.clone());
+    let issuer = IssuerService::new(SettingsService::new(pool.clone()));
     let (tx, _rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
     let users = UsersService::new(pool.clone());
@@ -497,6 +513,8 @@ async fn router_with_setup(allow_setup: bool) -> Router {
         expenses,
         trips,
         profitability,
+        invoices,
+        issuer,
         users,
         settings,
         audit,
@@ -698,6 +716,8 @@ async fn router_with_real_login(allow_setup: bool) -> (Router, AuditLogService) 
     let expenses = ExpensesService::new(pool.clone());
     let trips = TripsService::new(pool.clone());
     let profitability = ProfitabilityService::new(pool.clone());
+    let invoices = InvoicesService::new(pool.clone());
+    let issuer = IssuerService::new(SettingsService::new(pool.clone()));
     let (tx, _rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
     let users = UsersService::new(pool.clone());
@@ -716,6 +736,8 @@ async fn router_with_real_login(allow_setup: bool) -> (Router, AuditLogService) 
         expenses,
         trips,
         profitability,
+        invoices,
+        issuer,
         users,
         settings,
         audit: audit.clone(),
@@ -1169,6 +1191,8 @@ async fn router_with_role_tokens_and_audit() -> (Router, AuditLogService, String
     let expenses = ExpensesService::new(pool.clone());
     let trips = TripsService::new(pool.clone());
     let profitability = ProfitabilityService::new(pool.clone());
+    let invoices = InvoicesService::new(pool.clone());
+    let issuer = IssuerService::new(SettingsService::new(pool.clone()));
     let (tx, _rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
     let users = UsersService::new(pool.clone());
@@ -1214,6 +1238,8 @@ async fn router_with_role_tokens_and_audit() -> (Router, AuditLogService, String
         expenses,
         trips,
         profitability,
+        invoices,
+        issuer,
         users,
         settings,
         audit: audit.clone(),
@@ -1262,6 +1288,8 @@ async fn router_with_role_tokens_and_backup() -> (Router, tempfile::TempDir, Str
     let expenses = ExpensesService::new(db.clone());
     let trips = TripsService::new(db.clone());
     let profitability = ProfitabilityService::new(db.clone());
+    let invoices = InvoicesService::new(db.clone());
+    let issuer = IssuerService::new(SettingsService::new(db.clone()));
 
     let (tx, _rx) = broadcast::channel(16);
     let items = ItemsService::new(db.clone()).with_events(tx.clone());
@@ -1308,6 +1336,8 @@ async fn router_with_role_tokens_and_backup() -> (Router, tempfile::TempDir, Str
         expenses,
         trips,
         profitability,
+        invoices,
+        issuer,
         users,
         settings,
         audit,
@@ -2504,6 +2534,8 @@ async fn attachment_upload_and_delete_are_observable_on_the_event_channel() {
     let expenses = ExpensesService::new(pool.clone());
     let trips = TripsService::new(pool.clone());
     let profitability = ProfitabilityService::new(pool.clone());
+    let invoices = InvoicesService::new(pool.clone());
+    let issuer = IssuerService::new(SettingsService::new(pool.clone()));
     let (tx, mut rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
     let users = UsersService::new(pool.clone());
@@ -2524,6 +2556,8 @@ async fn attachment_upload_and_delete_are_observable_on_the_event_channel() {
         expenses,
         trips,
         profitability,
+        invoices,
+        issuer,
         users,
         settings,
         audit,
@@ -2979,4 +3013,209 @@ async fn profitability_of_an_unknown_project_is_not_found() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+// --- Business ドメイン（Phase 5 請求）の両経路対称テスト ---
+
+/// 請求書の作成 → 確定が REST 経由で動き、監査に採番した番号が残る。
+#[tokio::test]
+async fn editor_creates_and_issues_an_invoice_over_rest() {
+    let (router, admin, editor, viewer) = router_with_role_tokens().await;
+    let project_id = seed_project(&router, &editor).await;
+    let customer = body_json(
+        router
+            .clone()
+            .oneshot(post_json_auth(
+                "/api/customers/list",
+                &viewer,
+                json!(ListParams::default()),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let customer_id = customer["rows"][0]["id"].as_i64().expect("customer id");
+
+    let created = body_json(
+        router
+            .clone()
+            .oneshot(post_json_auth(
+                "/api/invoices",
+                &editor,
+                json!({
+                    "customerId": customer_id,
+                    "lines": [
+                        {
+                            "projectId": project_id,
+                            "itemName": "設計",
+                            "quantity": 1,
+                            "unitPrice": 33_335,
+                            "taxCategory": "STANDARD_10"
+                        },
+                        {
+                            "projectId": project_id,
+                            "itemName": "現地調整",
+                            "quantity": 2,
+                            "unitPrice": 33_335,
+                            "taxCategory": "STANDARD_10"
+                        }
+                    ]
+                }),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(created["status"], "DRAFT");
+    assert!(created["invoiceNumber"].is_null(), "{created}");
+    let invoice_id = created["id"].as_i64().expect("invoice id");
+
+    let issued = body_json(
+        router
+            .clone()
+            .oneshot(post_json_auth(
+                &format!("/api/invoices/{invoice_id}/issue"),
+                &editor,
+                json!({}),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(issued["status"], "ISSUED");
+    // 税率区分ごとに1回だけ端数処理する: floor(100,005 × 10%) = 10,000
+    assert_eq!(issued["totalTaxable"], 100_005);
+    assert_eq!(issued["totalTax"], 10_000);
+    assert_eq!(issued["taxSummaries"][0]["rateBp"], 1_000);
+    let number = issued["invoiceNumber"]
+        .as_str()
+        .expect("number")
+        .to_string();
+
+    // viewer は読めるが書けない。
+    let read = router
+        .clone()
+        .oneshot(get_auth(&format!("/api/invoices/{invoice_id}"), &viewer))
+        .await
+        .unwrap();
+    assert_eq!(read.status(), StatusCode::OK);
+    let denied = router
+        .clone()
+        .oneshot(post_json_auth(
+            "/api/invoices",
+            &viewer,
+            json!({ "customerId": customer_id, "lines": [] }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+
+    // 確定は監査に番号を残す。
+    let audit = body_json(
+        router
+            .oneshot(post_json_auth(
+                "/api/audit-log/list",
+                &admin,
+                json!(ListParams::default()),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let entry = audit["rows"]
+        .as_array()
+        .expect("rows")
+        .iter()
+        .find(|r| r["action"] == "issue" && r["resource"] == "invoices")
+        .expect("issue audit entry")
+        .clone();
+    let detail: serde_json::Value =
+        serde_json::from_str(entry["detail"].as_str().expect("detail")).expect("detail json");
+    assert_eq!(detail["invoiceNumber"], number);
+}
+
+/// 発行者情報は admin のみ（登録番号・振込先はアプリ全体の設定）。
+#[tokio::test]
+async fn issuer_settings_are_admin_only() {
+    let (router, admin, editor, viewer) = router_with_role_tokens().await;
+
+    let saved = body_json(
+        router
+            .clone()
+            .oneshot(put_json_auth(
+                "/api/issuer",
+                &admin,
+                json!({
+                    "name": "架空設計事務所",
+                    "registrationNumber": "T1234567890123",
+                    "roundingMode": "FLOOR"
+                }),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(saved["registrationNumber"], "T1234567890123");
+
+    for token in [&editor, &viewer] {
+        let denied = router
+            .clone()
+            .oneshot(get_auth("/api/issuer", token))
+            .await
+            .unwrap();
+        assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+    }
+}
+
+/// 未請求の工数・経費から候補を作る（要件 F-I1）。読み取りなのでロール床は viewer。
+#[tokio::test]
+async fn viewer_can_build_invoice_candidates() {
+    let (router, _admin, editor, viewer) = router_with_role_tokens().await;
+    let project_id = seed_project(&router, &editor).await;
+    let customer = body_json(
+        router
+            .clone()
+            .oneshot(post_json_auth(
+                "/api/customers/list",
+                &viewer,
+                json!(ListParams::default()),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let customer_id = customer["rows"][0]["id"].as_i64().expect("customer id");
+
+    router
+        .clone()
+        .oneshot(post_json_auth(
+            "/api/work_logs",
+            &editor,
+            json!({
+                "projectId": project_id,
+                "workedOn": "2026-08-20",
+                "workCategoryCode": "DESIGN",
+                "minutes": 60
+            }),
+        ))
+        .await
+        .unwrap();
+
+    let candidates = body_json(
+        router
+            .oneshot(post_json_auth(
+                "/api/invoices/candidates",
+                &viewer,
+                json!({ "customerId": customer_id, "from": "2026-08-01", "to": "2026-08-31" }),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let rows = candidates.as_array().expect("array");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["sourceType"], "WORK_LOG");
+    // seed_project の案件は請求単価が未設定なので金額 0 で出る（画面で入力を促す）。
+    assert!(rows[0]["billingHourlyRate"].is_null(), "{candidates}");
+    assert_eq!(rows[0]["amount"], 0);
 }

@@ -52,6 +52,16 @@
 //! | PUT    | `/api/trips/{id}`    | `TripInput`    | `Trip` (editor+)        |
 //! | DELETE | `/api/trips/{id}`    | -              | 204 (editor+, 生成物は trip_id を NULL 化) |
 //! | GET    | `/api/profitability/{id}` | -           | `ProjectProfitability` (any role, id は案件 id) |
+//! | POST   | `/api/invoices/list` | `ListParams`   | `ListResult<Invoice>` (any role) |
+//! | POST   | `/api/invoices/candidates` | `CandidateQuery` | `CandidateLine[]` (any role, 未請求の工数・経費) |
+//! | GET    | `/api/invoices/{id}` | -              | `InvoiceDetail` (any role)  |
+//! | POST   | `/api/invoices`      | `InvoiceInput` | `InvoiceDetail` (editor+)   |
+//! | PUT    | `/api/invoices/{id}` | `InvoiceInput` | `InvoiceDetail` (editor+, Draft のみ) |
+//! | DELETE | `/api/invoices/{id}` | -              | 204 (editor+, Draft のみ)   |
+//! | POST   | `/api/invoices/{id}/issue` | -        | `InvoiceDetail` (editor+, 確定・採番) |
+//! | POST   | `/api/invoices/{id}/cancel` | -       | `InvoiceDetail` (editor+, 赤伝) |
+//! | GET    | `/api/issuer`        | -              | `IssuerSettings` (admin)    |
+//! | PUT    | `/api/issuer`        | `IssuerInput`  | `IssuerSettings` (admin)    |
 //! | GET    | `/api/users`         | -              | `UserSummary[]` (admin) |
 //! | POST   | `/api/users`         | `{username,password,displayName,role}` | `UserIdentityResponse` (admin) |
 //! | PUT    | `/api/users/{id}`    | `{displayName,role}` | `UserSummary` (admin) |
@@ -229,6 +239,10 @@ use crate::audit::{AuditEntry, AuditLogService};
 use crate::backup::BackupService;
 use crate::customers::{Customer, CustomerInput, CustomersService};
 use crate::expenses::{Expense, ExpenseInput, ExpensesService};
+use crate::invoices::{
+    CandidateLine, CandidateQuery, Invoice, InvoiceDetail, InvoiceInput, InvoicesService,
+};
+use crate::issuer::{IssuerInput, IssuerService, IssuerSettings};
 use crate::items::{ImportResult, Item, ItemImportRow, ItemInput, ItemsService};
 use crate::masters::{
     CostRateInput, CostRateValues, ExpenseCategory, MastersService, WorkCategory,
@@ -244,6 +258,8 @@ use crate::work_logs::{WorkLog, WorkLogInput, WorkLogsService};
 mod attachments;
 mod customers;
 mod expenses;
+mod invoices;
+mod issuer;
 mod items;
 mod masters;
 mod profitability;
@@ -263,6 +279,8 @@ pub use banto_server::routes::audited_credential_verifier;
 use attachments::attachments_router;
 use customers::customers_router;
 use expenses::expenses_router;
+use invoices::invoices_router;
+use issuer::issuer_router;
 use items::items_router;
 use masters::masters_router;
 use profitability::profitability_router;
@@ -304,6 +322,9 @@ pub struct Services {
     pub trips: TripsService,
     /// Business ドメイン（Phase 4 採算管理）。読み取り専用。
     pub profitability: ProfitabilityService,
+    /// Business ドメイン（Phase 5 請求）。
+    pub invoices: InvoicesService,
+    pub issuer: IssuerService,
     pub users: UsersService,
     pub settings: SettingsService,
     pub audit: AuditLogService,
@@ -339,6 +360,8 @@ pub fn api_router(
         expenses,
         trips,
         profitability,
+        invoices,
+        issuer,
         users,
         settings,
         audit,
@@ -377,6 +400,8 @@ pub fn api_router(
         .merge(expenses_router(expenses, audit.clone(), auth.clone()))
         .merge(trips_router(trips, audit.clone(), auth.clone()))
         .merge(profitability_router(profitability, auth.clone()))
+        .merge(invoices_router(invoices, audit.clone(), auth.clone()))
+        .merge(issuer_router(issuer, audit.clone(), auth.clone()))
         .merge(users_router(users, audit.clone(), auth.clone()))
         .merge(audit_log_router(
             audit.clone(),

@@ -82,20 +82,21 @@ Phase 1 の確定内容（`open-questions.md`）に基づくテーブル定義�
 
 ### 2.2 `projects`
 
-| 列                          | 型                                          | 説明                                                                                              |
-| --------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `id`                        | `INTEGER PK AUTOINCREMENT`                  |                                                                                                   |
-| `code`                      | `TEXT NOT NULL UNIQUE`                      | 案件番号 `YYYY-NNN`（自動採番・手修正可）                                                         |
-| `customer_id`               | `INTEGER NOT NULL REFERENCES customers(id)` |                                                                                                   |
-| `name`                      | `TEXT NOT NULL`                             |                                                                                                   |
-| `status`                    | `TEXT NOT NULL`                             | `PROSPECT` / `ORDERED` / `IN_PROGRESS` / `AWAITING_ACCEPTANCE` / `COMPLETED` / `LOST` / `ON_HOLD` |
-| `started_on`                | `TEXT`                                      | 開始日                                                                                            |
-| `due_on`                    | `TEXT`                                      | 終了予定日                                                                                        |
-| `estimate_amount`           | `INTEGER`                                   | 見積額（税抜・円）                                                                                |
-| `contract_amount`           | `INTEGER`                                   | 契約額（税抜・円）。**粗利計算には使わず、請求進捗の分母に使う**                                  |
-| `scope`                     | `TEXT`                                      | 担当範囲                                                                                          |
-| `note`                      | `TEXT`                                      |                                                                                                   |
-| `created_at` / `updated_at` | `TEXT NOT NULL`                             |                                                                                                   |
+| 列                          | 型                                          | 説明                                                                                                               |
+| --------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `id`                        | `INTEGER PK AUTOINCREMENT`                  |                                                                                                                    |
+| `code`                      | `TEXT NOT NULL UNIQUE`                      | 案件番号 `YYYY-NNN`（自動採番・手修正可）                                                                          |
+| `customer_id`               | `INTEGER NOT NULL REFERENCES customers(id)` |                                                                                                                    |
+| `name`                      | `TEXT NOT NULL`                             |                                                                                                                    |
+| `status`                    | `TEXT NOT NULL`                             | `PROSPECT` / `ORDERED` / `IN_PROGRESS` / `AWAITING_ACCEPTANCE` / `COMPLETED` / `LOST` / `ON_HOLD`                  |
+| `started_on`                | `TEXT`                                      | 開始日                                                                                                             |
+| `due_on`                    | `TEXT`                                      | 終了予定日                                                                                                         |
+| `estimate_amount`           | `INTEGER`                                   | 見積額（税抜・円）                                                                                                 |
+| `contract_amount`           | `INTEGER`                                   | 契約額（税抜・円）。**粗利計算には使わず、請求進捗の分母に使う**                                                   |
+| `billing_hourly_rate`       | `INTEGER`                                   | 請求時間単価（税抜・円/時。決定 C-17）。工数から請求明細を起こすときの単価で、**内部原価の `cost_rates` とは別物** |
+| `scope`                     | `TEXT`                                      | 担当範囲                                                                                                           |
+| `note`                      | `TEXT`                                      |                                                                                                                    |
+| `created_at` / `updated_at` | `TEXT NOT NULL`                             |                                                                                                                    |
 
 ---
 
@@ -181,19 +182,20 @@ Phase 1 の確定内容（`open-questions.md`）に基づくテーブル定義�
 
 ### 4.2 `invoice_lines`
 
-| 列             | 型                                                           | 説明                                                                                                  |
-| -------------- | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
-| `id`           | `INTEGER PK AUTOINCREMENT`                                   |                                                                                                       |
-| `invoice_id`   | `INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE` |                                                                                                       |
-| `project_id`   | `INTEGER NOT NULL`                                           | **どの案件の売上か**（`CLAUDE.md` 1.3）。確定後もマスタ変更に引きずられないよう外部キー制約は張らない |
-| `line_no`      | `INTEGER NOT NULL`                                           | 表示順                                                                                                |
-| `item_name`    | `TEXT NOT NULL`                                              | 品目                                                                                                  |
-| `quantity`     | `INTEGER NOT NULL DEFAULT 1`                                 | 数量                                                                                                  |
-| `unit_price`   | `INTEGER NOT NULL`                                           | **単価（整数円のみ）**（B-2）                                                                         |
-| `amount`       | `INTEGER NOT NULL`                                           | 行金額（税抜）。**マイナス可**（値引き行、B-3）                                                       |
-| `tax_category` | `TEXT NOT NULL`                                              | 請求側の税区分。立替経費の再請求も既定は `STANDARD_10`（B-5）                                         |
-| `source_type`  | `TEXT`                                                       | `WORK_LOG` / `EXPENSE` / `MANUAL`（どこから起こした明細か）                                           |
-| `note`         | `TEXT`                                                       |                                                                                                       |
+| 列             | 型                                                           | 説明                                                                                                                                          |
+| -------------- | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`           | `INTEGER PK AUTOINCREMENT`                                   |                                                                                                                                               |
+| `invoice_id`   | `INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE` |                                                                                                                                               |
+| `project_id`   | `INTEGER NOT NULL`                                           | **どの案件の売上か**（`CLAUDE.md` 1.3）。確定後もマスタ変更に引きずられないよう外部キー制約は張らない                                         |
+| `line_no`      | `INTEGER NOT NULL`                                           | 表示順                                                                                                                                        |
+| `item_name`    | `TEXT NOT NULL`                                              | 品目                                                                                                                                          |
+| `quantity`     | `INTEGER NOT NULL DEFAULT 1`                                 | 数量                                                                                                                                          |
+| `unit_price`   | `INTEGER NOT NULL`                                           | **単価（整数円のみ）**（B-2）                                                                                                                 |
+| `amount`       | `INTEGER NOT NULL`                                           | 行金額（税抜）。**マイナス可**（値引き行、B-3）                                                                                               |
+| `tax_category` | `TEXT NOT NULL`                                              | 請求側の税区分。立替経費の再請求も既定は `STANDARD_10`（B-5）                                                                                 |
+| `source_type`  | `TEXT`                                                       | `WORK_LOG` / `EXPENSE` / `MANUAL`（どこから起こした明細か）                                                                                   |
+| `source_id`    | `INTEGER`                                                    | 元の工数・経費の id。確定時に `invoiced` を立て、取消時に戻すために使う。**外部キー制約は張らない**（元データを消しても確定済みの明細は残す） |
+| `note`         | `TEXT`                                                       |                                                                                                                                               |
 
 > 工数から起こす明細は「時間単価 × 時間」を**行金額として整数で確定**させてから載せる（B-2）。
 

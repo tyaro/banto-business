@@ -27,6 +27,10 @@ use admin_template_core::customers::{Customer, CustomerInput, CustomersService};
 use admin_template_core::db::init_db;
 use admin_template_core::events::event_channel;
 use admin_template_core::expenses::{Expense, ExpenseInput, ExpensesService};
+use admin_template_core::invoices::{
+    CandidateLine, CandidateQuery, Invoice, InvoiceDetail, InvoiceInput, InvoicesService,
+};
+use admin_template_core::issuer::{IssuerInput, IssuerService, IssuerSettings};
 use admin_template_core::items::{ImportResult, Item, ItemImportRow, ItemInput, ItemsService};
 use admin_template_core::masters::{
     CostRateInput, CostRateValues, ExpenseCategory, MastersService, WorkCategory,
@@ -72,6 +76,11 @@ struct AppState {
     /// Phase 4（採算管理）。採算値を保持しない導出専用のサービスなので
     /// 変更イベントを持たない（要件 F-P7）。
     profitability: ProfitabilityService,
+    /// Phase 5（請求）。確定は work_logs / expenses の `invoiced` も動かすため、
+    /// InvoicesService が3リソース分の変更イベントを送る。
+    invoices: InvoicesService,
+    /// 発行者情報（`settings` を入れ物として使う。CLAUDE.md 第2章）。
+    issuer: IssuerService,
     /// The webview window's own session identity, set by `auth_login`/
     /// `auth_setup` and cleared by `auth_logout` - all called directly via
     /// `invoke()`, never through `/api/auth/login`. `Some` means logged in;
@@ -525,6 +534,160 @@ async fn trips_linked_counts(
     require_role(&state, Role::Viewer, "trips").await?;
     let (work_logs, expenses) = state.trips.linked_record_counts(id).await?;
     Ok(serde_json::json!({ "workLogs": work_logs, "expenses": expenses }))
+}
+
+// --- Phase 5: 請求（conventions §1 の両経路対称。REST は /api/invoices/*）---
+
+#[tauri::command]
+async fn invoices_list(
+    state: State<'_, AppState>,
+    params: ListParams,
+) -> Result<ListResult<Invoice>, BantoError> {
+    require_role(&state, Role::Viewer, "invoices").await?;
+    state.invoices.list(params).await
+}
+
+#[tauri::command]
+async fn invoices_get(state: State<'_, AppState>, id: i64) -> Result<InvoiceDetail, BantoError> {
+    require_role(&state, Role::Viewer, "invoices").await?;
+    state.invoices.get(id).await
+}
+
+/// 未請求の工数・経費から明細候補を作る（要件 F-I1）。読み取りなので監査しない。
+#[tauri::command]
+async fn invoices_candidates(
+    state: State<'_, AppState>,
+    query: CandidateQuery,
+) -> Result<Vec<CandidateLine>, BantoError> {
+    require_role(&state, Role::Viewer, "invoices").await?;
+    state.invoices.candidates(query).await
+}
+
+#[tauri::command]
+async fn invoices_create(
+    state: State<'_, AppState>,
+    values: InvoiceInput,
+) -> Result<InvoiceDetail, BantoError> {
+    let actor = require_role(&state, Role::Editor, "invoices").await?;
+    let detail = state.invoices.create(values).await?;
+    record_ok(
+        &state.audit,
+        &actor,
+        "create",
+        "invoices",
+        Some(&detail.invoice.id.to_string()),
+        Some(serde_json::json!({
+            "customerId": detail.invoice.customer_id,
+            "lines": detail.lines.len(),
+        })),
+    )
+    .await;
+    Ok(detail)
+}
+
+#[tauri::command]
+async fn invoices_update(
+    state: State<'_, AppState>,
+    id: i64,
+    values: InvoiceInput,
+) -> Result<InvoiceDetail, BantoError> {
+    let actor = require_role(&state, Role::Editor, "invoices").await?;
+    let detail = state.invoices.update(id, values).await?;
+    record_ok(
+        &state.audit,
+        &actor,
+        "update",
+        "invoices",
+        Some(&detail.invoice.id.to_string()),
+        Some(serde_json::json!({
+            "customerId": detail.invoice.customer_id,
+            "lines": detail.lines.len(),
+        })),
+    )
+    .await;
+    Ok(detail)
+}
+
+#[tauri::command]
+async fn invoices_delete(state: State<'_, AppState>, id: i64) -> Result<(), BantoError> {
+    let actor = require_role(&state, Role::Editor, "invoices").await?;
+    state.invoices.delete(id).await?;
+    record_ok(
+        &state.audit,
+        &actor,
+        "delete",
+        "invoices",
+        Some(&id.to_string()),
+        None,
+    )
+    .await;
+    Ok(())
+}
+
+/// 確定（要件 F-I7）。監査に採番した番号と合計を残す — 番号を消費する
+/// 不可逆な操作なので、いつ何番を出したか追えるようにする（REST と同じ detail）。
+#[tauri::command]
+async fn invoices_issue(state: State<'_, AppState>, id: i64) -> Result<InvoiceDetail, BantoError> {
+    let actor = require_role(&state, Role::Editor, "invoices").await?;
+    let detail = state.invoices.issue(id).await?;
+    record_ok(
+        &state.audit,
+        &actor,
+        "issue",
+        "invoices",
+        Some(&detail.invoice.id.to_string()),
+        Some(serde_json::json!({
+            "invoiceNumber": detail.invoice.invoice_number,
+            "totalAmount": detail.invoice.total_amount,
+            "issuedOn": detail.invoice.issued_on,
+        })),
+    )
+    .await;
+    Ok(detail)
+}
+
+/// 取消（赤伝。決定 C-10）。
+#[tauri::command]
+async fn invoices_cancel(state: State<'_, AppState>, id: i64) -> Result<InvoiceDetail, BantoError> {
+    let actor = require_role(&state, Role::Editor, "invoices").await?;
+    let detail = state.invoices.cancel(id).await?;
+    record_ok(
+        &state.audit,
+        &actor,
+        "cancel",
+        "invoices",
+        Some(&detail.invoice.id.to_string()),
+        Some(serde_json::json!({ "invoiceNumber": detail.invoice.invoice_number })),
+    )
+    .await;
+    Ok(detail)
+}
+
+/// 発行者情報の読み取り（admin のみ。`settings_get` と同じ床）。
+#[tauri::command]
+async fn issuer_get(state: State<'_, AppState>) -> Result<IssuerSettings, BantoError> {
+    require_role(&state, Role::Admin, "issuer").await?;
+    state.issuer.get().await
+}
+
+/// 発行者情報の更新。監査に値そのものは残さない（CLAUDE.md 第8章）。
+#[tauri::command]
+async fn issuer_update(
+    state: State<'_, AppState>,
+    input: IssuerInput,
+) -> Result<IssuerSettings, BantoError> {
+    let actor = require_role(&state, Role::Admin, "issuer").await?;
+    let settings = state.issuer.set(input).await?;
+    record_ok(
+        &state.audit,
+        &actor,
+        "update",
+        "issuer",
+        None,
+        Some(serde_json::json!({ "roundingMode": settings.rounding_mode })),
+    )
+    .await;
+    Ok(settings)
 }
 
 /// 案件採算（Phase 4）。REST の `GET /api/profitability/{id}`（id は案件 id）と同じ
@@ -1319,6 +1482,8 @@ async fn start_embedded_server(
     expenses: ExpensesService,
     trips: TripsService,
     profitability: ProfitabilityService,
+    invoices: InvoicesService,
+    issuer: IssuerService,
     users: UsersService,
     settings: SettingsService,
     audit: AuditLogService,
@@ -1345,6 +1510,8 @@ async fn start_embedded_server(
         expenses,
         trips,
         profitability,
+        invoices,
+        issuer,
         users,
         settings,
         audit,
@@ -1428,6 +1595,8 @@ async fn server_apply(
                 state.expenses.clone(),
                 state.trips.clone(),
                 state.profitability.clone(),
+                state.invoices.clone(),
+                state.issuer.clone(),
                 state.users.clone(),
                 state.settings.clone(),
                 state.audit.clone(),
@@ -2405,8 +2574,11 @@ pub fn run() {
             let trips = TripsService::new(db.clone()).with_events(events.clone());
             // 採算は導出専用（変更が無いので `with_events` を持たない）。
             let profitability = ProfitabilityService::new(db.clone());
+            let invoices = InvoicesService::new(db.clone()).with_events(events.clone());
             let users = UsersService::new(db.clone());
             let settings = SettingsService::new(db.clone());
+            // 発行者情報は Banto の `settings` を入れ物として使う。
+            let issuer = IssuerService::new(settings.clone());
             let backup = BackupService::new(db_path.clone(), db.clone());
             // M20 attachments (spec docs/attachments-plan.md §3.3): same
             // sibling-directory convention as `backups/` above, next to the
@@ -2622,6 +2794,8 @@ pub fn run() {
                     expenses.clone(),
                     trips.clone(),
                     profitability.clone(),
+                    invoices.clone(),
+                    issuer.clone(),
                     users.clone(),
                     settings.clone(),
                     audit.clone(),
@@ -2690,6 +2864,8 @@ pub fn run() {
                 expenses,
                 trips,
                 profitability,
+                invoices,
+                issuer,
                 auth: Mutex::new(initial_auth),
                 users,
                 settings,
@@ -2746,6 +2922,16 @@ pub fn run() {
             trips_update,
             trips_delete,
             profitability_get,
+            invoices_list,
+            invoices_get,
+            invoices_candidates,
+            invoices_create,
+            invoices_update,
+            invoices_delete,
+            invoices_issue,
+            invoices_cancel,
+            issuer_get,
+            issuer_update,
             auth_status,
             auth_setup,
             auth_login,
@@ -2814,6 +3000,8 @@ mod tests {
             expenses: ExpensesService::new(pool.clone()).with_events(events.clone()),
             trips: TripsService::new(pool.clone()).with_events(events.clone()),
             profitability: ProfitabilityService::new(pool.clone()),
+            invoices: InvoicesService::new(pool.clone()),
+            issuer: IssuerService::new(SettingsService::new(pool.clone())),
             auth: Mutex::new(None),
             users: UsersService::new(pool.clone()),
             settings: SettingsService::new(pool.clone()),
@@ -2861,6 +3049,8 @@ mod tests {
             expenses: ExpensesService::new(pool.clone()).with_events(events.clone()),
             trips: TripsService::new(pool.clone()).with_events(events.clone()),
             profitability: ProfitabilityService::new(pool.clone()),
+            invoices: InvoicesService::new(pool.clone()),
+            issuer: IssuerService::new(SettingsService::new(pool.clone())),
             auth: Mutex::new(None),
             users: UsersService::new(pool.clone()),
             settings: SettingsService::new(pool.clone()),

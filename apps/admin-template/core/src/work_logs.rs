@@ -559,6 +559,7 @@ mod tests {
                 due_on: None,
                 estimate_amount: None,
                 contract_amount: None,
+                billing_hourly_rate: None,
                 scope: None,
                 note: None,
             })

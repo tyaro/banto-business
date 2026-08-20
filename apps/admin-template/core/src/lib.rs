@@ -10,11 +10,14 @@ pub mod dates;
 pub mod db;
 pub mod events;
 pub mod expenses;
+pub mod invoices;
+pub mod issuer;
 pub mod items;
 pub mod masters;
 pub mod profitability;
 pub mod projects;
 pub mod rest;
+pub mod tax;
 pub mod trips;
 pub mod work_logs;
 

@@ -21,6 +21,8 @@ use admin_template_core::backup::BackupService;
 use admin_template_core::customers::{CustomerInput, CustomersService, DAY_END_OF_MONTH};
 use admin_template_core::db::init_db_from_target;
 use admin_template_core::expenses::{ExpenseInput, ExpensesService};
+use admin_template_core::invoices::{InvoiceInput, InvoiceLineInput, InvoicesService};
+use admin_template_core::issuer::{IssuerInput, IssuerService};
 use admin_template_core::items::{ImportResult, ItemImportRow, ItemInput, ItemsService};
 use admin_template_core::masters::{CostRateInput, MastersService};
 use admin_template_core::profitability::ProfitabilityService;
@@ -44,8 +46,9 @@ async fn reset_schema(url: &str) {
         // Business ドメイン（Phase 2〜）。テンプレート由来のテーブルだけを
         // 落としていると、2回目以降のローカル実行でマイグレーションが
         // 「既に存在する」で失敗する（CI は毎回新しいコンテナなので出ない）。
-        "DROP TABLE IF EXISTS expenses, work_logs, trips, cost_rates, work_categories, \
-         expense_categories, projects, customers CASCADE",
+        "DROP TABLE IF EXISTS invoice_tax_summaries, invoice_lines, invoices, expenses, \
+         work_logs, trips, cost_rates, work_categories, expense_categories, projects, \
+         customers CASCADE",
         "DROP TABLE IF EXISTS _sqlx_migrations",
     ] {
         sqlx::query(stmt)
@@ -359,6 +362,7 @@ async fn app_layer_crud_round_trips_on_postgres() {
             due_on: None,
             estimate_amount: None,
             contract_amount: Some(1_000_000),
+            billing_hourly_rate: Some(10_000),
             scope: None,
             note: None,
         })
@@ -433,4 +437,89 @@ async fn app_layer_crud_round_trips_on_postgres() {
         result.effective_rate_excluding_travel,
         Some(-85_000 * 60 / 600)
     );
+
+    // --- Business ドメイン: 請求（Phase 5）の確定・取消を実 PostgreSQL で ---
+    // 確定は「請求書の更新 + 税集計の入れ替え + 元データの invoiced 反映」を
+    // 1トランザクションで行う。トランザクションの分岐は方言ごとにマクロで
+    // 展開しているので、Postgres 側が実際に通ることをここで確認する。
+    let issuer = IssuerService::new(SettingsService::new(db.clone()));
+    issuer
+        .set(IssuerInput {
+            name: Some("架空設計事務所".to_string()),
+            registration_number: Some("T1234567890123".to_string()),
+            address: Some("架空県架空市1-2-3".to_string()),
+            bank_account: None,
+            rounding_mode: "FLOOR".to_string(),
+        })
+        .await
+        .expect("issuer settings on postgres");
+
+    let invoices = InvoicesService::new(db.clone());
+    let draft = invoices
+        .create(InvoiceInput {
+            customer_id: customer.id,
+            closing_on: None,
+            due_on: None,
+            corrected_invoice_id: None,
+            note: None,
+            lines: vec![
+                InvoiceLineInput {
+                    project_id: project.id,
+                    item_name: "設計".to_string(),
+                    quantity: 3,
+                    unit_price: 33_335,
+                    tax_category: "STANDARD_10".to_string(),
+                    source_type: None,
+                    source_id: None,
+                    note: None,
+                },
+                InvoiceLineInput {
+                    project_id: project.id,
+                    item_name: "交通費".to_string(),
+                    quantity: 1,
+                    unit_price: 10_000,
+                    tax_category: "REDUCED_8".to_string(),
+                    source_type: None,
+                    source_id: None,
+                    note: None,
+                },
+            ],
+        })
+        .await
+        .expect("invoice draft on postgres");
+    assert_eq!(draft.invoice.invoice_number, None);
+
+    let issued = invoices
+        .issue(draft.invoice.id)
+        .await
+        .expect("issue on postgres");
+    // 税率区分ごとに1回だけ端数処理する:
+    //   10%: floor(100,005 × 10%) = 10,000（行ごとなら 9,999）
+    //    8%: floor(10,000 × 8%)   =    800
+    assert_eq!(issued.invoice.total_taxable, 110_005);
+    assert_eq!(issued.invoice.total_tax, 10_800);
+    assert_eq!(issued.tax_summaries.len(), 2);
+    assert!(issued
+        .invoice
+        .invoice_number
+        .as_deref()
+        .expect("number")
+        .starts_with("INV-"));
+
+    // 案件採算の売上は確定済みの明細から集計される（要件 F-P4）。
+    let with_revenue = profitability
+        .get(project.id)
+        .await
+        .expect("profitability after issue");
+    assert_eq!(with_revenue.revenue, 110_005);
+
+    invoices
+        .cancel(issued.invoice.id)
+        .await
+        .expect("cancel on postgres");
+    let after_cancel = profitability
+        .get(project.id)
+        .await
+        .expect("profitability after cancel");
+    assert_eq!(after_cancel.revenue, 0);
 }
