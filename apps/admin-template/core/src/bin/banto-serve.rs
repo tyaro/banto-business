@@ -38,6 +38,8 @@ use admin_template_core::customers::CustomersService;
 use admin_template_core::db::{init_db_from_target, is_postgres_url};
 use admin_template_core::events::event_channel;
 use admin_template_core::expenses::ExpensesService;
+use admin_template_core::invoices::InvoicesService;
+use admin_template_core::issuer::IssuerService;
 use admin_template_core::items::ItemsService;
 use admin_template_core::masters::MastersService;
 use admin_template_core::profitability::ProfitabilityService;
@@ -122,8 +124,12 @@ async fn main() {
     let trips = TripsService::new(db.clone()).with_events(events.clone());
     // 採算は導出専用（変更が無いので `with_events` を持たない）。
     let profitability = ProfitabilityService::new(db.clone());
+    let invoices = InvoicesService::new(db.clone()).with_events(events.clone());
     let users = UsersService::new(db.clone());
     let settings = SettingsService::new(db.clone());
+    // 発行者情報は Banto の `settings` を入れ物として使う（専用テーブルを
+    // 作らない。CLAUDE.md 第2章）。
+    let issuer = IssuerService::new(settings.clone());
     let backup = BackupService::new(db_path_buf.clone(), db.clone());
     // M20 attachments (spec docs/attachments-plan.md §3.3): base_dir is the
     // DB's own parent directory (same sibling-directory convention as
@@ -196,6 +202,8 @@ async fn main() {
         expenses,
         trips,
         profitability,
+        invoices,
+        issuer,
         users,
         settings,
         audit,

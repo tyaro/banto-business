@@ -187,14 +187,38 @@ impl ProfitabilityService {
         Self { db }
     }
 
-    /// 案件売上 = 確定済 InvoiceLine の税抜合計（F-P4）。
+    /// 案件売上 = **確定済（ISSUED）** InvoiceLine の税抜合計（F-P4）。
     ///
-    /// Invoice / InvoiceLine は Phase 5 で追加する。それまでは確定済の明細が
-    /// 存在しないため、売上は構造的に 0 になる（未請求の作業・経費を売上に
-    /// 立てないのが F-P4 の決定なので、「まだ 0」は仕様どおりの状態）。
-    /// Phase 5 ではこの関数だけを `invoice_lines` の集計に差し替える。
-    async fn revenue_for(&self, _project_id: i64) -> Result<i64, BantoError> {
-        Ok(0)
+    /// Draft は売上に立てない（まだ請求していない）。取消（CANCELLED）も
+    /// 除く — 赤伝で差し替えた分が二重に計上されないようにするため。
+    /// 未請求の作業・経費も売上に立たない（F-P4 の決定）ので、請求前の案件は
+    /// 売上 0 のまま原価だけが立つ。誤読を防ぐのが請求進捗の併記（F-P5）。
+    async fn revenue_for(&self, project_id: i64) -> Result<i64, BantoError> {
+        let dialect = self.db.dialect();
+        // `CAST(... AS BIGINT)` は PostgreSQL の `SUM(bigint)` が numeric を
+        // 返すため（`WORK_TOTALS_SQL` と同じ理由）。
+        let sql = format!(
+            "SELECT CAST(COALESCE(SUM(l.amount), 0) AS BIGINT) \
+             FROM invoice_lines l JOIN invoices i ON i.id = l.invoice_id \
+             WHERE l.project_id = {} AND i.status = 'ISSUED'",
+            dialect.placeholder(1)
+        );
+        match &self.db {
+            Db::Sqlite(pool) => {
+                sqlx::query_scalar::<_, i64>(&sql)
+                    .bind(project_id)
+                    .fetch_one(pool)
+                    .await
+            }
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => {
+                sqlx::query_scalar::<_, i64>(&sql)
+                    .bind(project_id)
+                    .fetch_one(pool)
+                    .await
+            }
+        }
+        .map_err(banto_storage::storage_error)
     }
 
     async fn project_header(&self, project_id: i64) -> Result<ProjectHeader, BantoError> {
@@ -342,6 +366,8 @@ mod tests {
         work_logs: WorkLogsService,
         expenses: ExpensesService,
         projects: ProjectsService,
+        pool: Db,
+        customer_id: i64,
         project_id: i64,
     }
 
@@ -377,6 +403,7 @@ mod tests {
                 due_on: None,
                 estimate_amount: None,
                 contract_amount: Some(1_000_000),
+                billing_hourly_rate: None,
                 scope: None,
                 note: None,
             })
@@ -397,6 +424,8 @@ mod tests {
             work_logs: WorkLogsService::new(pool.clone()),
             expenses: ExpensesService::new(pool.clone()),
             projects,
+            pool,
+            customer_id: customer.id,
             project_id: project.id,
         }
     }
@@ -586,6 +615,7 @@ mod tests {
                     due_on: None,
                     estimate_amount: None,
                     contract_amount: None,
+                    billing_hourly_rate: None,
                     scope: None,
                     note: None,
                 },
@@ -621,6 +651,7 @@ mod tests {
                     due_on: None,
                     estimate_amount: None,
                     contract_amount: project.contract_amount,
+                    billing_hourly_rate: project.billing_hourly_rate,
                     scope: None,
                     note: None,
                 },
@@ -630,6 +661,52 @@ mod tests {
         let result = f.profitability.get(f.project_id).await.expect("get");
         assert_eq!(result.status, "LOST");
         assert!(!result.counts_toward_profitability);
+    }
+
+    /// 確定した請求書の明細だけが売上に立つ（F-P4）。Draft と取消は立たない。
+    #[tokio::test]
+    async fn revenue_comes_from_issued_invoice_lines_only() {
+        use crate::invoices::{InvoiceInput, InvoiceLineInput, InvoicesService};
+
+        let f = fixture().await;
+        let invoices = InvoicesService::new(f.pool.clone());
+        let input = |unit_price: i64| InvoiceInput {
+            customer_id: f.customer_id,
+            closing_on: None,
+            due_on: None,
+            corrected_invoice_id: None,
+            note: None,
+            lines: vec![InvoiceLineInput {
+                project_id: f.project_id,
+                item_name: "設計".to_string(),
+                quantity: 1,
+                unit_price,
+                tax_category: "STANDARD_10".to_string(),
+                source_type: None,
+                source_id: None,
+                note: None,
+            }],
+        };
+
+        // Draft のうちは売上に立たない。
+        let draft = invoices.create(input(200_000)).await.expect("draft");
+        let before = f.profitability.get(f.project_id).await.expect("get");
+        assert_eq!(before.revenue, 0);
+        assert_eq!(before.gross_margin_bp, None);
+
+        let issued = invoices.issue(draft.invoice.id).await.expect("issue");
+        let after = f.profitability.get(f.project_id).await.expect("get");
+        // 税抜の明細合計がそのまま売上（消費税は採算に含めない。決定 A-3）。
+        assert_eq!(after.revenue, 200_000);
+        assert_eq!(after.gross_profit, 200_000);
+        // 契約額 1,000,000 に対する請求進捗 20%
+        assert_eq!(after.invoice_progress_bp, Some(2_000));
+        assert_eq!(after.gross_margin_bp, Some(10_000));
+
+        // 取消した請求書は売上から外れる（赤伝の二重計上を防ぐ）。
+        invoices.cancel(issued.invoice.id).await.expect("cancel");
+        let cancelled = f.profitability.get(f.project_id).await.expect("get");
+        assert_eq!(cancelled.revenue, 0);
     }
 
     #[test]

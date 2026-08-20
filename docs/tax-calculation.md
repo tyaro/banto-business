@@ -158,6 +158,11 @@ pub fn calculate_tax(
 
 **この関数は純粋関数とし、DB・Tauri に依存させない。**
 
+**実装（Phase 5）：** `apps/admin-template/core/src/tax.rs`。上の I/F どおり
+`calculate_tax(lines, rounding) -> TaxSummary` の純粋関数で、第6章のケース表
+T-01〜T-11b をそのままテストにしてある（T-12 はスナップショットの検証なので
+`invoices.rs` 側のテスト）。
+
 ---
 
 ## 6. テストケース表

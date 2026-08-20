@@ -73,6 +73,50 @@ pub fn is_valid_date(iso_date: &str) -> bool {
     days_since_epoch(iso_date).is_some()
 }
 
+/// `YYYY-MM-DD` を `(年, 月, 日)` に分解する。存在しない日なら `None`。
+pub fn parse_iso_date(iso_date: &str) -> Option<(i64, i64, i64)> {
+    days_since_epoch(iso_date)?;
+    let year: i64 = iso_date[0..4].parse().ok()?;
+    let month: i64 = iso_date[5..7].parse().ok()?;
+    let day: i64 = iso_date[8..10].parse().ok()?;
+    Some((year, month, day))
+}
+
+/// その年月の日数。月初の翌月から1日戻して数える（閏年判定を持たない）。
+pub fn days_in_month(year: i64, month: i64) -> Option<i64> {
+    if !(1..=12).contains(&month) {
+        return None;
+    }
+    let (next_year, next_month) = add_months(year, month, 1)?;
+    let first_of_next = days_since_epoch(&format!("{next_year:04}-{next_month:02}-01"))?;
+    let first_of_this = days_since_epoch(&format!("{year:04}-{month:02}-01"))?;
+    Some(first_of_next - first_of_this)
+}
+
+/// `offset` ヶ月後（負なら前）の年月。日は持たない。
+pub fn add_months(year: i64, month: i64, offset: i64) -> Option<(i64, i64)> {
+    if !(1..=12).contains(&month) {
+        return None;
+    }
+    // 0 起点の通算月にしてから足すと、年またぎの場合分けが要らない。
+    let total = year * 12 + (month - 1) + offset;
+    Some((total.div_euclid(12), total.rem_euclid(12) + 1))
+}
+
+/// その年月の `day` 日。`end_of_month` が真なら月末日を返す。
+///
+/// 締日・支払日を「1〜28 の日、または月末」で持つ設計（決定 C-8）に対応する。
+/// 29〜31 を許さないのは2月に存在しない日を持たないため。
+pub fn day_of_month(year: i64, month: i64, day: i64, end_of_month: bool) -> Option<String> {
+    let day = if end_of_month {
+        days_in_month(year, month)?
+    } else {
+        day
+    };
+    let iso = format!("{year:04}-{month:02}-{day:02}");
+    days_since_epoch(&iso).map(|_| iso)
+}
+
 /// `start` から `end` までの日数（両端を含む）。順序が逆なら `None`。
 pub fn inclusive_day_span(start: &str, end: &str) -> Option<i64> {
     let start = days_since_epoch(start)?;
@@ -86,6 +130,55 @@ pub fn inclusive_day_span(start: &str, end: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_into_year_month_day() {
+        assert_eq!(parse_iso_date("2026-08-20"), Some((2026, 8, 20)));
+        assert_eq!(parse_iso_date("2026-02-30"), None);
+    }
+
+    #[test]
+    fn counts_days_in_month_including_leap_years() {
+        assert_eq!(days_in_month(2026, 1), Some(31));
+        assert_eq!(days_in_month(2026, 2), Some(28));
+        // 2028 は閏年
+        assert_eq!(days_in_month(2028, 2), Some(29));
+        // 2100 は閏年ではない（400 年ルール）
+        assert_eq!(days_in_month(2100, 2), Some(28));
+        assert_eq!(days_in_month(2026, 4), Some(30));
+        assert_eq!(days_in_month(2026, 13), None);
+    }
+
+    #[test]
+    fn adds_months_across_year_boundaries() {
+        assert_eq!(add_months(2026, 8, 1), Some((2026, 9)));
+        assert_eq!(add_months(2026, 12, 1), Some((2027, 1)));
+        assert_eq!(add_months(2026, 12, 2), Some((2027, 2)));
+        assert_eq!(add_months(2026, 1, -1), Some((2025, 12)));
+        assert_eq!(add_months(2026, 1, 0), Some((2026, 1)));
+    }
+
+    #[test]
+    fn resolves_day_of_month_and_end_of_month() {
+        assert_eq!(
+            day_of_month(2026, 8, 20, false),
+            Some("2026-08-20".to_string())
+        );
+        assert_eq!(
+            day_of_month(2026, 2, 1, true),
+            Some("2026-02-28".to_string())
+        );
+        assert_eq!(
+            day_of_month(2028, 2, 1, true),
+            Some("2028-02-29".to_string())
+        );
+        assert_eq!(
+            day_of_month(2026, 9, 1, true),
+            Some("2026-09-30".to_string())
+        );
+        // 存在しない日は None
+        assert_eq!(day_of_month(2026, 2, 30, false), None);
+    }
 
     #[test]
     fn round_trips_known_dates() {

@@ -104,6 +104,11 @@ pub struct Project {
     /// 契約額（円・税抜）。粗利計算には使わない（請求進捗の分母）。
     #[sqlx(rename = "contract_amount")]
     pub contract_amount: Option<i64>,
+    /// 請求時間単価（円/時・税抜。決定 C-17）。工数から請求明細を起こすときの
+    /// 単価で、**内部原価の `cost_rates` とは別物**（CLAUDE.md 1.2）。未設定なら
+    /// `None` で、請求書の候補生成時に単価の入力を求める。
+    #[sqlx(rename = "billing_hourly_rate")]
+    pub billing_hourly_rate: Option<i64>,
     pub scope: Option<String>,
     pub note: Option<String>,
     #[sqlx(rename = "created_at")]
@@ -126,6 +131,7 @@ pub struct ProjectInput {
     pub due_on: Option<String>,
     pub estimate_amount: Option<i64>,
     pub contract_amount: Option<i64>,
+    pub billing_hourly_rate: Option<i64>,
     pub scope: Option<String>,
     pub note: Option<String>,
 }
@@ -155,6 +161,7 @@ struct NormalizedProject {
     due_on: Option<String>,
     estimate_amount: Option<i64>,
     contract_amount: Option<i64>,
+    billing_hourly_rate: Option<i64>,
     scope: Option<String>,
     note: Option<String>,
 }
@@ -261,6 +268,7 @@ fn validate(input: &ProjectInput) -> Result<NormalizedProject, BantoError> {
 
     check_optional_amount(&mut errors, "estimateAmount", input.estimate_amount);
     check_optional_amount(&mut errors, "contractAmount", input.contract_amount);
+    check_optional_amount(&mut errors, "billingHourlyRate", input.billing_hourly_rate);
 
     let scope = check_optional_text(&mut errors, "scope", &input.scope, MAX_SCOPE_LEN);
     let note = check_optional_text(&mut errors, "note", &input.note, MAX_NOTE_LEN);
@@ -275,6 +283,7 @@ fn validate(input: &ProjectInput) -> Result<NormalizedProject, BantoError> {
             due_on,
             estimate_amount: input.estimate_amount,
             contract_amount: input.contract_amount,
+            billing_hourly_rate: input.billing_hourly_rate,
             scope,
             note,
         })
@@ -296,6 +305,7 @@ fn column_map() -> ColumnMap {
         .column("dueOn", "due_on")
         .column("estimateAmount", "estimate_amount")
         .column("contractAmount", "contract_amount")
+        .column("billingHourlyRate", "billing_hourly_rate")
         .column("scope", "scope")
         .column("note", "note")
         .column("createdAt", "created_at")
@@ -304,7 +314,8 @@ fn column_map() -> ColumnMap {
 
 const RESOURCE: &str = "projects";
 const COLUMNS: &str = "id, code, customer_id, name, status, started_on, due_on, \
-     estimate_amount, contract_amount, scope, note, created_at, updated_at";
+     estimate_amount, contract_amount, billing_hourly_rate, scope, note, \
+     created_at, updated_at";
 
 fn today_expr(dialect: Dialect) -> &'static str {
     match dialect {
@@ -550,8 +561,9 @@ impl ProjectsService {
         let today = today_expr(dialect);
         let sql = format!(
             "INSERT INTO projects (code, customer_id, name, status, started_on, due_on, \
-             estimate_amount, contract_amount, scope, note, created_at, updated_at) \
-             VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {today}, {today}) \
+             estimate_amount, contract_amount, billing_hourly_rate, scope, note, \
+             created_at, updated_at) \
+             VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {today}, {today}) \
              RETURNING {COLUMNS}",
             dialect.placeholder(1),
             dialect.placeholder(2),
@@ -563,6 +575,7 @@ impl ProjectsService {
             dialect.placeholder(8),
             dialect.placeholder(9),
             dialect.placeholder(10),
+            dialect.placeholder(11),
         );
         let project = match &self.db {
             Db::Sqlite(pool) => {
@@ -597,7 +610,8 @@ impl ProjectsService {
         let sql = format!(
             "UPDATE projects SET code = {}, customer_id = {}, name = {}, status = {}, \
              started_on = {}, due_on = {}, estimate_amount = {}, contract_amount = {}, \
-             scope = {}, note = {}, updated_at = {} WHERE id = {} RETURNING {COLUMNS}",
+             billing_hourly_rate = {}, scope = {}, note = {}, updated_at = {} \
+             WHERE id = {} RETURNING {COLUMNS}",
             dialect.placeholder(1),
             dialect.placeholder(2),
             dialect.placeholder(3),
@@ -608,8 +622,9 @@ impl ProjectsService {
             dialect.placeholder(8),
             dialect.placeholder(9),
             dialect.placeholder(10),
-            today_expr(dialect),
             dialect.placeholder(11),
+            today_expr(dialect),
+            dialect.placeholder(12),
         );
         let project = match &self.db {
             Db::Sqlite(pool) => {
@@ -689,6 +704,7 @@ where
         .bind(value.due_on.as_deref())
         .bind(value.estimate_amount)
         .bind(value.contract_amount)
+        .bind(value.billing_hourly_rate)
         .bind(value.scope.as_deref())
         .bind(value.note.as_deref())
 }
@@ -732,6 +748,7 @@ mod tests {
             due_on: None,
             estimate_amount: None,
             contract_amount: None,
+            billing_hourly_rate: None,
             scope: None,
             note: None,
         }

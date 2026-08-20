@@ -309,7 +309,15 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 		{ tauri: 'backups_stage_restore', rest: 'POST /api/backups/{fileName}/restore', role: 'Admin' },
 		{ tauri: 'backups_cancel_restore', rest: 'DELETE /api/backups/pending-restore', role: 'Admin' },
 		{ tauri: 'attachments_upload', rest: 'POST /api/attachments', role: 'Editor' },
-		{ tauri: 'attachments_delete', rest: 'DELETE /api/attachments/{id}', role: 'Editor' }
+		{ tauri: 'attachments_delete', rest: 'DELETE /api/attachments/{id}', role: 'Editor' },
+		// Business ドメイン（Phase 5 請求）。確定・取消は請求書番号を消費し、
+		// 元の工数・経費の invoiced も動かすため、両経路とも監査する。
+		{ tauri: 'invoices_create', rest: 'POST /api/invoices', role: 'Editor' },
+		{ tauri: 'invoices_update', rest: 'PUT /api/invoices/{id}', role: 'Editor' },
+		{ tauri: 'invoices_delete', rest: 'DELETE /api/invoices/{id}', role: 'Editor' },
+		{ tauri: 'invoices_issue', rest: 'POST /api/invoices/{id}/issue', role: 'Editor' },
+		{ tauri: 'invoices_cancel', rest: 'POST /api/invoices/{id}/cancel', role: 'Editor' },
+		{ tauri: 'issuer_update', rest: 'PUT /api/issuer', role: 'Admin' }
 	];
 
 	// ロール床を照合したい読み取り系の対（CR-6）。読み取りは rule 8 の存在対称の
@@ -319,7 +327,8 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 		{ tauri: 'audit_config_get', rest: 'GET /api/audit-log/config', role: 'Admin' },
 		{ tauri: 'audit_log_list', rest: 'POST /api/audit-log/list', role: 'Admin' },
 		{ tauri: 'system_info', rest: 'GET /api/system/info', role: 'Admin' },
-		{ tauri: 'profitability_get', rest: 'GET /api/profitability/{id}', role: 'Viewer' }
+		{ tauri: 'profitability_get', rest: 'GET /api/profitability/{id}', role: 'Viewer' },
+		{ tauri: 'issuer_get', rest: 'GET /api/issuer', role: 'Admin' }
 	];
 
 	// desktop-only（OS/ローカル統合。REST を持たないのが正しい、§1 の対称対象外）。
@@ -354,6 +363,10 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 		'expense_categories_list',
 		'expenses_get',
 		'expenses_list',
+		'invoices_candidates',
+		'invoices_get',
+		'invoices_list',
+		'issuer_get',
 		'items_get',
 		'items_list',
 		'profitability_get',
@@ -382,6 +395,8 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 		'GET /api/events',
 		'GET /api/customers/{id}',
 		'GET /api/expenses/{id}',
+		'GET /api/invoices/{id}',
+		'GET /api/issuer',
 		'GET /api/items/{id}',
 		'GET /api/profitability/{id}',
 		'GET /api/projects/{id}',
@@ -399,6 +414,8 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 		'GET /api/attachments/{id}/thumbnail',
 		'POST /api/customers/list',
 		'POST /api/expenses/list',
+		'POST /api/invoices/list',
+		'POST /api/invoices/candidates',
 		'POST /api/items/list',
 		'POST /api/projects/list',
 		'POST /api/trips/list',
