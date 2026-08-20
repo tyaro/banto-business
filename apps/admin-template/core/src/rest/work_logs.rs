@@ -37,7 +37,7 @@ async fn work_logs_create(
         &state.auth,
         &headers,
         "create",
-        "work-logs",
+        "work_logs",
         Some(&work_log.id.to_string()),
         Some(json!({ "projectId": work_log.project_id, "workedOn": work_log.worked_on })),
     )
@@ -57,7 +57,7 @@ async fn work_logs_update(
         &state.auth,
         &headers,
         "update",
-        "work-logs",
+        "work_logs",
         Some(&work_log.id.to_string()),
         Some(json!({ "projectId": work_log.project_id, "workedOn": work_log.worked_on })),
     )
@@ -76,7 +76,7 @@ async fn work_logs_delete(
         &state.auth,
         &headers,
         "delete",
-        "work-logs",
+        "work_logs",
         Some(&id.to_string()),
         None,
     )
@@ -87,8 +87,8 @@ async fn work_logs_delete(
 /// 読み取り（任意のロール）。
 fn work_logs_read_router(work_logs: WorkLogsService, auth: AuthState) -> Router {
     Router::new()
-        .route("/api/work-logs/list", post(work_logs_list))
-        .route("/api/work-logs/{id}", get(work_logs_get))
+        .route("/api/work_logs/list", post(work_logs_list))
+        .route("/api/work_logs/{id}", get(work_logs_get))
         .with_state(work_logs)
         .layer(middleware::from_fn_with_state(auth, require_auth))
 }
@@ -106,9 +106,9 @@ fn work_logs_write_router(
         auth: auth.clone(),
     };
     Router::new()
-        .route("/api/work-logs", post(work_logs_create))
+        .route("/api/work_logs", post(work_logs_create))
         .route(
-            "/api/work-logs/{id}",
+            "/api/work_logs/{id}",
             axum::routing::put(work_logs_update).delete(work_logs_delete),
         )
         .with_state(state)
@@ -116,7 +116,7 @@ fn work_logs_write_router(
             RoleGuard {
                 auth: auth.clone(),
                 min: Role::Editor,
-                resource: "work-logs",
+                resource: "work_logs",
                 audit,
             },
             require_role_at_least,

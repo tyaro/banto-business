@@ -10,7 +10,18 @@ import * as m from '$lib/paraglide/messages';
  *  icon component only in the display layer ($lib/components/navIcons.ts) -
  *  this module stays UI-agnostic. */
 export type NavIconKey =
-	'dashboard' | 'customers' | 'projects' | 'items' | 'tree' | 'users' | 'audit-log' | 'settings';
+	| 'dashboard'
+	| 'customers'
+	| 'projects'
+	| 'work-logs'
+	| 'trips'
+	| 'expenses'
+	| 'cost-rates'
+	| 'items'
+	| 'tree'
+	| 'users'
+	| 'audit-log'
+	| 'settings';
 
 /** Paraglide message key for a nav entry's visible label (i18n layer ②,
  *  ADR-0005). The label itself is resolved at render time via `m[labelKey]()`
@@ -19,6 +30,10 @@ export type NavLabelKey =
 	| 'nav.dashboard'
 	| 'nav.customers'
 	| 'nav.projects'
+	| 'nav.workLogs'
+	| 'nav.trips'
+	| 'nav.expenses'
+	| 'nav.costRates'
 	| 'nav.items'
 	| 'nav.tree'
 	| 'nav.users'
@@ -39,6 +54,11 @@ export const navItems: NavItem[] = [
 	// docs/plan.md 第18章 Phase 2 の依存順（Customer → Project）に合わせる。
 	{ path: '/customers', labelKey: 'nav.customers', icon: 'customers' },
 	{ path: '/projects', labelKey: 'nav.projects', icon: 'projects' },
+	// Phase 3（工数・経費）。入力頻度の高い順に並べる（工数 → 出張 → 経費）。
+	{ path: '/work-logs', labelKey: 'nav.workLogs', icon: 'work-logs' },
+	{ path: '/trips', labelKey: 'nav.trips', icon: 'trips' },
+	{ path: '/expenses', labelKey: 'nav.expenses', icon: 'expenses' },
+	{ path: '/cost-rates', labelKey: 'nav.costRates', icon: 'cost-rates' },
 	{ path: '/items', labelKey: 'nav.items', icon: 'items' },
 	{ path: '/tree', labelKey: 'nav.tree', icon: 'tree' },
 	{ path: '/users', labelKey: 'nav.users', icon: 'users', adminOnly: true },

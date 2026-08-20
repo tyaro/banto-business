@@ -264,22 +264,24 @@ apt-get update -qq && apt-get install -y \
 
 ## 7. Phase 進行
 
-現在の Phase：**Phase 3（工数・経費）着手可**
+現在の Phase：**Phase 4（採算管理）着手可**
 
 | Phase | 内容                                   | 状態   |
 | ----- | -------------------------------------- | ------ |
 | 0     | リポジトリ作成・テンプレート派生       | 完了   |
 | 1     | 要件・ドメイン設計                     | 完了   |
 | 2     | 基本マスター（Customer / Project）     | 完了   |
-| 3     | 工数・経費（WorkLog / Trip / Expense） | 着手可 |
-| 4     | 採算管理                               | 未着手 |
+| 3     | 工数・経費（WorkLog / Trip / Expense） | 完了   |
+| 4     | 採算管理                               | 着手可 |
 | 5     | 請求（Invoice / PDF）                  | 未着手 |
 | 6     | 入金管理（Payment）                    | 未着手 |
 | 7     | 実運用評価                             | 未着手 |
 
 Phase 1 の成果物は `docs/domain/`（requirements / er-diagram / schema / state-machine / glossary / open-questions）にあり、未決事項はゼロ。`docs/tax-calculation.md` も確定済み。
 
-Phase 2 で `docs/recipes/add-resource.md` の標準手順が Banto Business でも成立することを確認した（顧客・案件の CRUD が両経路 + 画面まで通った）。摩擦は `docs/banto-feedback.md` に4件記録済み。**`items` デモの削除は Phase 2 完了後の作業として残っている**（Phase 3 の着手前でも後でもよいが、Phase 3 のリソース追加でもう一度手本として使う可能性がある）。
+**リソース識別子は Rust の識別子として妥当な綴りにする**（`work_logs` / `cost_rates`）。`@banto/admin-core` の DataProvider が Tauri コマンドを `${resource}_list` の規約で呼ぶため、ハイフンを含む名前はコマンドを定義できない（`docs/banto-feedback.md` に記録）。画面の URL は `/work-logs` のようにケバブケースで構わない。
+
+Phase 3 までで `docs/banto-feedback.md` に7件記録済み。**`items` デモの削除は未実施**（Phase 4 以降の任意のタイミングで行う。もう手本としては使わない）。
 
 **Phase 1 が確定するまで Phase 2 以降のテーブルを先行実装しない。**
 

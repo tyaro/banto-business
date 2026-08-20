@@ -28,7 +28,9 @@ use admin_template_core::db::init_db;
 use admin_template_core::events::event_channel;
 use admin_template_core::expenses::{Expense, ExpenseInput, ExpensesService};
 use admin_template_core::items::{ImportResult, Item, ItemImportRow, ItemInput, ItemsService};
-use admin_template_core::masters::{CostRateInput, ExpenseCategory, MastersService, WorkCategory};
+use admin_template_core::masters::{
+    CostRateInput, CostRateValues, ExpenseCategory, MastersService, WorkCategory,
+};
 use admin_template_core::projects::{Project, ProjectInput, ProjectsService};
 use admin_template_core::rest::{api_router, audited_credential_verifier, Services};
 use admin_template_core::settings::{AuditSettings, AuthSettings, ServerSettings, SettingsService};
@@ -305,25 +307,37 @@ async fn work_categories_list(state: State<'_, AppState>) -> Result<Vec<WorkCate
 #[tauri::command]
 async fn expense_categories_list(
     state: State<'_, AppState>,
-) -> Result<Vec<ExpenseCategory>, BantoError> {
-    require_role(&state, Role::Viewer, "expense-categories").await?;
-    state.masters.list_expense_categories().await
+    _params: ListParams,
+) -> Result<ListResult<ExpenseCategory>, BantoError> {
+    require_role(&state, Role::Viewer, "expense_categories").await?;
+    let rows = state.masters.list_expense_categories().await?;
+    let total_count = rows.len() as u64;
+    Ok(ListResult { rows, total_count })
 }
 
 /// 内部原価レートの設定。**採算計算はこのテーブルを参照しない**
 /// （CLAUDE.md 1.2）ため、変更しても過去の工数原価は動かない。
+/// レートの設定。DataProvider の `update(resource, id, values)` に合わせ、
+/// id（作業分類コード）と値を分けて受ける。
 #[tauri::command]
-async fn cost_rates_set(
+async fn cost_rates_update(
     state: State<'_, AppState>,
-    values: CostRateInput,
+    id: String,
+    values: CostRateValues,
 ) -> Result<WorkCategory, BantoError> {
-    let actor = require_role(&state, Role::Editor, "cost-rates").await?;
-    let updated = state.masters.set_cost_rate(values).await?;
+    let actor = require_role(&state, Role::Editor, "cost_rates").await?;
+    let updated = state
+        .masters
+        .set_cost_rate(CostRateInput {
+            work_category_code: id,
+            hourly_rate: values.hourly_rate,
+        })
+        .await?;
     record_ok(
         &state.audit,
         &actor,
         "update",
-        "cost-rates",
+        "cost_rates",
         Some(&updated.code),
         Some(serde_json::json!({ "hourlyRate": updated.hourly_rate })),
     )
@@ -336,13 +350,13 @@ async fn work_logs_list(
     state: State<'_, AppState>,
     params: ListParams,
 ) -> Result<ListResult<WorkLog>, BantoError> {
-    require_role(&state, Role::Viewer, "work-logs").await?;
+    require_role(&state, Role::Viewer, "work_logs").await?;
     state.work_logs.list(params).await
 }
 
 #[tauri::command]
 async fn work_logs_get(state: State<'_, AppState>, id: i64) -> Result<WorkLog, BantoError> {
-    require_role(&state, Role::Viewer, "work-logs").await?;
+    require_role(&state, Role::Viewer, "work_logs").await?;
     state.work_logs.get(id).await
 }
 
@@ -351,13 +365,13 @@ async fn work_logs_create(
     state: State<'_, AppState>,
     values: WorkLogInput,
 ) -> Result<WorkLog, BantoError> {
-    let actor = require_role(&state, Role::Editor, "work-logs").await?;
+    let actor = require_role(&state, Role::Editor, "work_logs").await?;
     let work_log = state.work_logs.create(values).await?;
     record_ok(
         &state.audit,
         &actor,
         "create",
-        "work-logs",
+        "work_logs",
         Some(&work_log.id.to_string()),
         Some(serde_json::json!({
             "projectId": work_log.project_id,
@@ -374,13 +388,13 @@ async fn work_logs_update(
     id: i64,
     values: WorkLogInput,
 ) -> Result<WorkLog, BantoError> {
-    let actor = require_role(&state, Role::Editor, "work-logs").await?;
+    let actor = require_role(&state, Role::Editor, "work_logs").await?;
     let work_log = state.work_logs.update(id, values).await?;
     record_ok(
         &state.audit,
         &actor,
         "update",
-        "work-logs",
+        "work_logs",
         Some(&work_log.id.to_string()),
         Some(serde_json::json!({
             "projectId": work_log.project_id,
@@ -393,13 +407,13 @@ async fn work_logs_update(
 
 #[tauri::command]
 async fn work_logs_delete(state: State<'_, AppState>, id: i64) -> Result<(), BantoError> {
-    let actor = require_role(&state, Role::Editor, "work-logs").await?;
+    let actor = require_role(&state, Role::Editor, "work_logs").await?;
     state.work_logs.delete(id).await?;
     record_ok(
         &state.audit,
         &actor,
         "delete",
-        "work-logs",
+        "work_logs",
         Some(&id.to_string()),
         None,
     )
@@ -2690,7 +2704,7 @@ pub fn run() {
             projects_delete,
             work_categories_list,
             expense_categories_list,
-            cost_rates_set,
+            cost_rates_update,
             work_logs_list,
             work_logs_get,
             work_logs_create,

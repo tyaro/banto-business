@@ -146,6 +146,32 @@ Banto Business の開発中に見つかった Banto 本体への課題を記録�
 
 ---
 
+### [2026-08-20] Phase 3 — DataProvider の命名規約がリソース名を Rust 識別子に縛る
+
+| 項目 | 内容 |
+|---|---|
+| 事象 | `@banto/admin-core` の Tauri DataProvider は `${resource}_list` / `_get` / `_create` / `_update` / `_delete` の規約で `invoke()` する。したがって**リソース名にハイフンを使えない**（`work-logs_list` は Rust の識別子として不正でコマンドを定義できない）。この制約は `docs/recipes/add-resource.md` にも `providers/tauri.ts` の doc にも明示が無く、`work-logs` で一通り実装してから発覚した |
+| 影響 | リソース名を `work_logs` に変え、REST パスも `/api/work_logs/...` に揃え直した（画面の URL は `/work-logs` のまま）。Banto 本体のリソースは `items` / `users` / `attachments` と全て単語1つなので、この制約に当たるのは複数語のリソースを持つ派生アプリだけ |
+| 回避策 | リソース識別子を Rust の識別子と同形（`work_logs` / `cost_rates` / `work_categories`）に統一した |
+| 分類 | Banto共通（複数語リソースは業務ドメインでは普通に出る） |
+| Banto Issue | 未起票 |
+| 状態 | 未対応（提案：レシピか `providers/tauri.ts` の doc に「リソース名は Rust の識別子として妥当な綴りにする」と1行明記する） |
+
+---
+
+### [2026-08-20] Phase 3 — 日付ユーティリティが Banto 内で重複しており、派生アプリは3つ目のコピーを書くことになる
+
+| 項目 | 内容 |
+|---|---|
+| 事象 | 依存を足さない方針（conventions §3）で Hinnant の civil-date アルゴリズムを自前実装している箇所が、`apps/admin-template/core/src/db.rs` と `crates/banto-admin-services/src/backup.rs` の**2箇所に重複**している（どちらも private）。Business は日付の逆変換（日付→通算日）と日数加算が要ったため、`dates.rs` に3つ目を書いた |
+| 影響 | 同じアルゴリズムが同一リポジトリ内に3つ存在する。どれかにバグがあっても他へ伝播しない |
+| 回避策 | Business 側で `dates.rs` を新設し、往復変換で存在しない日（2026-02-30 / 平年の 2/29）も弾けるようにした上でテストを付けた |
+| 分類 | Banto共通 |
+| Banto Issue | 未起票 |
+| 状態 | 未対応（提案：`banto-core` に業務日付ユーティリティを置き、db.rs / backup.rs もそれを使う。ADR-0002 の「依存を足さない」は自前実装を1箇所に集めることと矛盾しない） |
+
+---
+
 ### [記録例・削除可] Phase 2 — Grid の列幅がリソース定義から指定できない
 
 | 項目 | 内容 |
@@ -167,6 +193,7 @@ Banto Business の開発中に見つかった Banto 本体への課題を記録�
 |---|---|---|---|
 | 0 | 2 | 2 | 派生（rename / バージョン固定）の導線に穴 |
 | 2 | 5 | 5 | フォームの表現力（説明文）とデモ資産の重さ。機械検査は有効に機能 |
+| 3 | 2 | 2 | 命名規約の暗黙の制約と、ユーティリティの重複 |
 | 3 | 0 | 0 | |
 | 4 | 0 | 0 | |
 | 5 | 0 | 0 | |

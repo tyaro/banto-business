@@ -32,14 +32,14 @@
 //! | POST   | `/api/projects`      | `ProjectInput` | `Project` (editor+)     |
 //! | PUT    | `/api/projects/{id}` | `ProjectInput` | `Project` (editor+)     |
 //! | DELETE | `/api/projects/{id}` | -              | 204 (editor+)           |
-//! | GET    | `/api/work-categories` | -            | `WorkCategory[]` (any role) |
-//! | GET    | `/api/expense-categories` | -         | `ExpenseCategory[]` (any role) |
-//! | PUT    | `/api/cost-rates`    | `CostRateInput` | `WorkCategory` (editor+) |
-//! | POST   | `/api/work-logs/list` | `ListParams`  | `ListResult<WorkLog>` (any role) |
-//! | GET    | `/api/work-logs/{id}` | -            | `WorkLog` (any role)    |
-//! | POST   | `/api/work-logs`     | `WorkLogInput` | `WorkLog` (editor+)     |
-//! | PUT    | `/api/work-logs/{id}` | `WorkLogInput` | `WorkLog` (editor+)    |
-//! | DELETE | `/api/work-logs/{id}` | -            | 204 (editor+)           |
+//! | POST   | `/api/work_categories/list` | `ListParams` | `ListResult<WorkCategory>` (any role) |
+//! | POST   | `/api/expense_categories/list` | `ListParams` | `ListResult<ExpenseCategory>` (any role) |
+//! | PUT    | `/api/cost_rates/{id}` | `CostRateValues` | `WorkCategory` (editor+) |
+//! | POST   | `/api/work_logs/list` | `ListParams`  | `ListResult<WorkLog>` (any role) |
+//! | GET    | `/api/work_logs/{id}` | -            | `WorkLog` (any role)    |
+//! | POST   | `/api/work_logs`     | `WorkLogInput` | `WorkLog` (editor+)     |
+//! | PUT    | `/api/work_logs/{id}` | `WorkLogInput` | `WorkLog` (editor+)    |
+//! | DELETE | `/api/work_logs/{id}` | -            | 204 (editor+)           |
 //! | POST   | `/api/expenses/list` | `ListParams`   | `ListResult<Expense>` (any role) |
 //! | GET    | `/api/expenses/{id}` | -              | `Expense` (any role)    |
 //! | POST   | `/api/expenses`      | `ExpenseInput` | `Expense` (editor+)     |
@@ -229,7 +229,7 @@ use crate::backup::BackupService;
 use crate::customers::{Customer, CustomerInput, CustomersService};
 use crate::expenses::{Expense, ExpenseInput, ExpensesService};
 use crate::items::{ImportResult, Item, ItemImportRow, ItemInput, ItemsService};
-use crate::masters::{CostRateInput, ExpenseCategory, MastersService, WorkCategory};
+use crate::masters::{CostRateInput, CostRateValues, ExpenseCategory, MastersService, WorkCategory};
 use crate::projects::{Project, ProjectInput, ProjectsService};
 use crate::settings::SettingsService;
 use crate::system_info::SystemInfoService;

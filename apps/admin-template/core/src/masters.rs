@@ -48,12 +48,21 @@ pub struct ExpenseCategory {
     pub active: i64,
 }
 
-/// 内部原価レートの設定ペイロード。
+/// 内部原価レートの設定ペイロード（サービス層の入力）。
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CostRateInput {
     pub work_category_code: String,
     /// 時間単価（円）。0 も許す（社内調整など原価を載せない運用のため）。
+    pub hourly_rate: i64,
+}
+
+/// `PUT /api/cost_rates/{id}` / Tauri `cost_rates_update` のボディ。
+/// リソースの id（＝作業分類コード）はパス／引数側にあるので、ボディは
+/// 単価だけを持つ（DataProvider の `update(resource, id, values)` 契約）。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CostRateValues {
     pub hourly_rate: i64,
 }
 
@@ -88,7 +97,7 @@ impl MastersService {
     fn notify_changed(&self) {
         if let Some(tx) = &self.events {
             let _ = tx.send(ServerEvent::ResourceChanged {
-                resource: "cost-rates".to_string(),
+                resource: "cost_rates".to_string(),
             });
         }
     }
