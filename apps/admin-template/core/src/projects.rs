@@ -425,7 +425,7 @@ impl ProjectsService {
     async fn ensure_customer_exists(&self, customer_id: i64) -> Result<(), BantoError> {
         let dialect = self.db.dialect();
         let sql = format!(
-            "SELECT COUNT(*) FROM customers WHERE id = {}",
+            "SELECT COUNT(*) FROM customers WHERE id = {} AND deleted_at IS NULL",
             dialect.placeholder(1)
         );
         let count: i64 = match &self.db {
@@ -457,8 +457,8 @@ impl ProjectsService {
 
     pub async fn list(&self, params: ListParams) -> Result<ListResult<Project>, BantoError> {
         let columns = column_map();
-        let select_rows = format!("SELECT {COLUMNS} FROM projects");
-        const SELECT_COUNT: &str = "SELECT COUNT(*) FROM projects";
+        let select_rows = format!("SELECT {COLUMNS} FROM {}", crate::sync::live("projects"));
+        let select_count = format!("SELECT COUNT(*) FROM {}", crate::sync::live("projects"));
 
         match &self.db {
             Db::Sqlite(pool) => {
@@ -474,7 +474,7 @@ impl ProjectsService {
                     .await
                     .map_err(banto_storage::storage_error)?;
 
-                let mut count_builder: QueryBuilder<'_, Sqlite> = QueryBuilder::new(SELECT_COUNT);
+                let mut count_builder: QueryBuilder<'_, Sqlite> = QueryBuilder::new(&select_count);
                 banto_storage::list_query::sqlite::append_where(
                     &mut count_builder,
                     &columns,
@@ -507,7 +507,7 @@ impl ProjectsService {
                     .map_err(banto_storage::storage_error)?;
 
                 let mut count_builder: QueryBuilder<'_, sqlx::Postgres> =
-                    QueryBuilder::new(SELECT_COUNT);
+                    QueryBuilder::new(&select_count);
                 banto_storage::list_query::postgres::append_where(
                     &mut count_builder,
                     &columns,
@@ -530,7 +530,7 @@ impl ProjectsService {
     pub async fn get(&self, id: i64) -> Result<Project, BantoError> {
         let dialect = self.db.dialect();
         let sql = format!(
-            "SELECT {COLUMNS} FROM projects WHERE id = {}",
+            "SELECT {COLUMNS} FROM projects WHERE id = {} AND deleted_at IS NULL",
             dialect.placeholder(1)
         );
         match &self.db {
@@ -655,9 +655,78 @@ impl ProjectsService {
         Ok(project)
     }
 
-    pub async fn delete(&self, id: i64) -> Result<(), BantoError> {
+    /// 案件にぶら下がっている**生きている**子の件数を数え、1件でもあれば
+    /// `Validation` を返す。
+    ///
+    /// 対象は `work_logs` / `expenses` / `trips` / `invoice_lines`。
+    /// `invoice_lines` を含めるのは、確定済みの請求書が参照している案件を
+    /// 消せてしまうと、請求書の明細から案件名を辿れなくなるため
+    /// （`invoice_lines` は論理削除の対象外なので `deleted_at` を見ない）。
+    async fn ensure_no_children(&self, id: i64) -> Result<(), BantoError> {
         let dialect = self.db.dialect();
-        let sql = format!("DELETE FROM projects WHERE id = {}", dialect.placeholder(1));
+        // (表示名, SQL) の順に数える。最初に見つかった1件で止めず全部数えるのは、
+        // 「工数を消したら次は経費で怒られた」を繰り返させないため。
+        let checks = [
+            ("工数", "work_logs", true),
+            ("経費", "expenses", true),
+            ("出張", "trips", true),
+            ("請求明細", "invoice_lines", false),
+        ];
+        let mut blockers: Vec<String> = Vec::new();
+        for (label, table, soft_deletable) in checks {
+            let alive = if soft_deletable {
+                " AND deleted_at IS NULL"
+            } else {
+                ""
+            };
+            let sql = format!(
+                "SELECT COUNT(*) FROM {table} WHERE project_id = {}{alive}",
+                dialect.placeholder(1)
+            );
+            let count: i64 = match &self.db {
+                Db::Sqlite(pool) => sqlx::query_scalar(&sql).bind(id).fetch_one(pool).await,
+                #[cfg(feature = "postgres")]
+                Db::Postgres(pool) => sqlx::query_scalar(&sql).bind(id).fetch_one(pool).await,
+            }
+            .map_err(banto_storage::storage_error)?;
+            if count > 0 {
+                blockers.push(format!("{label}{count}件"));
+            }
+        }
+        if !blockers.is_empty() {
+            return Err(BantoError::Validation {
+                field_errors: vec![FieldError {
+                    field: "id".to_string(),
+                    message: format!(
+                        "この案件には{}が紐づいているため削除できません。先に削除するか別の案件へ付け替えてください",
+                        blockers.join("・")
+                    ),
+                }],
+            });
+        }
+        Ok(())
+    }
+
+    /// 案件を削除する（**論理削除**。`docs/domain/sync.md` 5節）。
+    ///
+    /// **子が残っていれば拒否する。** 物理削除だった頃は外部キーが弾いていたが
+    /// （`work_logs` / `expenses` / `trips` / `invoice_lines` が `project_id` を
+    /// 参照する）、論理削除では行が消えないので外部キーは何も言わない。
+    /// ガードを置かないと、工数がぶら下がったまま案件だけが見えなくなり、
+    /// **採算からも一覧からも辿れない工数**が残る。
+    ///
+    /// 数えるのは生きている子だけ。墓石を数えると、実際には何も残っていない
+    /// 案件が永久に消せなくなる（顧客側の同じ判断と揃える）。
+    pub async fn delete(&self, id: i64) -> Result<(), BantoError> {
+        self.ensure_no_children(id).await?;
+        let dialect = self.db.dialect();
+        let today = today_expr(dialect);
+        let sql = format!(
+            "UPDATE projects SET deleted_at = {}, updated_at = {today} WHERE id = {} \
+             AND deleted_at IS NULL",
+            crate::sync::deleted_at_expr(dialect),
+            dialect.placeholder(1)
+        );
         let rows_affected = match &self.db {
             Db::Sqlite(pool) => sqlx::query(&sql)
                 .bind(id)
@@ -762,6 +831,131 @@ mod tests {
                 .collect(),
             other => panic!("expected Validation, got {other:?}"),
         }
+    }
+
+    /// **論理削除の基本形**（`docs/domain/sync.md` 5節）。
+    #[tokio::test]
+    async fn deleting_a_project_is_a_soft_delete() {
+        let (svc, customer_id) = service_with_customer().await;
+        let mut keep = valid_input(customer_id);
+        keep.code = "P001".to_string();
+        svc.create(keep).await.expect("残す");
+        let mut doomed_input = valid_input(customer_id);
+        doomed_input.code = "P002".to_string();
+        let doomed = svc.create(doomed_input).await.expect("消す").id;
+
+        svc.delete(doomed).await.expect("delete");
+
+        assert!(matches!(
+            svc.get(doomed).await.expect_err("墓石は get で返さない"),
+            BantoError::NotFound { .. }
+        ));
+        let listed = svc.list(ListParams::default()).await.unwrap();
+        assert_eq!(listed.total_count, 1);
+        assert_ne!(listed.rows[0].id, doomed);
+        assert!(svc.delete(doomed).await.is_err(), "二重削除が成功している");
+    }
+
+    /// **消した顧客の下に案件を作れないこと。**
+    ///
+    /// 顧客の存在確認が墓石まで見ると、削除済みの顧客にぶら下がる案件を
+    /// 作れてしまい、一覧から辿れない案件ができる。
+    #[tokio::test]
+    async fn a_tombstoned_customer_cannot_receive_new_projects() {
+        let db = migrate_memory().await.expect("migrate_memory");
+        let customers = CustomersService::new(db.clone());
+        let customer = customers
+            .create(CustomerInput {
+                code: "C001".to_string(),
+                name: "架空商事".to_string(),
+                contact_person: None,
+                address: None,
+                phone: None,
+                email: None,
+                billing_name: None,
+                closing_day: DAY_END_OF_MONTH,
+                payment_month_offset: 1,
+                payment_day: DAY_END_OF_MONTH,
+                note: None,
+            })
+            .await
+            .expect("customer");
+        customers.delete(customer.id).await.expect("delete 顧客");
+
+        let projects = ProjectsService::new(db);
+        let err = projects
+            .create(valid_input(customer.id))
+            .await
+            .expect_err("消した顧客に案件を作れている");
+        assert_eq!(
+            field_errors(&err)
+                .into_iter()
+                .map(|(f, _)| f)
+                .collect::<Vec<_>>(),
+            vec!["customerId"]
+        );
+    }
+
+    /// **子が生きている案件は消せない。**
+    ///
+    /// 物理削除の頃は外部キーが弾いていたが、論理削除では行が消えないので
+    /// 外部キーは何も言わない。ガードが無いと、工数がぶら下がったまま案件だけ
+    /// 見えなくなり、採算からも一覧からも辿れない工数が残る。
+    #[tokio::test]
+    async fn a_project_with_live_children_cannot_be_deleted() {
+        let db = migrate_memory().await.expect("migrate_memory");
+        let customers = CustomersService::new(db.clone());
+        let customer = customers
+            .create(CustomerInput {
+                code: "C001".to_string(),
+                name: "架空商事".to_string(),
+                contact_person: None,
+                address: None,
+                phone: None,
+                email: None,
+                billing_name: None,
+                closing_day: DAY_END_OF_MONTH,
+                payment_month_offset: 1,
+                payment_day: DAY_END_OF_MONTH,
+                note: None,
+            })
+            .await
+            .expect("customer");
+        let projects = ProjectsService::new(db.clone());
+        let project = projects
+            .create(valid_input(customer.id))
+            .await
+            .expect("project");
+
+        let work_logs = crate::work_logs::WorkLogsService::new(db.clone());
+        let work_log = work_logs
+            .create(crate::work_logs::WorkLogInput {
+                project_id: project.id,
+                trip_id: None,
+                worked_on: "2026-08-20".to_string(),
+                work_category_code: "DESIGN".to_string(),
+                minutes: 60,
+                applied_rate: Some(6_000),
+                description: None,
+                invoiced: false,
+            })
+            .await
+            .expect("work log");
+
+        let err = projects
+            .delete(project.id)
+            .await
+            .expect_err("工数が残っているのに案件を消せている");
+        let (field, message) = field_errors(&err).into_iter().next().expect("field error");
+        assert_eq!(field, "id");
+        assert!(message.contains("工数1件"), "{message}");
+
+        // 工数を論理削除すると、案件も消せるようになる（墓石は数えない）。
+        work_logs.delete(work_log.id).await.expect("delete 工数");
+        projects
+            .delete(project.id)
+            .await
+            .expect("墓石の工数が案件の削除をブロックしている");
     }
 
     #[tokio::test]
