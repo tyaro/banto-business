@@ -2731,13 +2731,15 @@ async fn seed_project(router: &Router, editor: &str) -> i64 {
             .unwrap(),
     )
     .await;
+    // レートは分類コードを id として PUT する（DataProvider の
+    // `update(resource, id, values)` に対応。docs/recipes/add-resource.md）。
     for (code, rate) in [("DESIGN", 6000), ("TRAVEL", 3000), ("ONSITE", 6000)] {
         let response = router
             .clone()
             .oneshot(put_json_auth(
-                "/api/cost-rates",
+                &format!("/api/cost_rates/{code}"),
                 editor,
-                json!({ "workCategoryCode": code, "hourlyRate": rate }),
+                json!({ "hourlyRate": rate }),
             ))
             .await
             .unwrap();
@@ -2750,10 +2752,10 @@ async fn seed_project(router: &Router, editor: &str) -> i64 {
 async fn viewer_can_read_masters_but_cannot_set_rates() {
     let (router, _admin, _editor, viewer) = router_with_role_tokens().await;
 
-    for path in ["/api/work-categories", "/api/expense-categories"] {
+    for path in ["/api/work_categories/list", "/api/expense_categories/list"] {
         let response = router
             .clone()
-            .oneshot(get_auth(path, &viewer))
+            .oneshot(post_json_auth(path, &viewer, json!(ListParams::default())))
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK, "{path}");
@@ -2761,9 +2763,9 @@ async fn viewer_can_read_masters_but_cannot_set_rates() {
 
     let denied = router
         .oneshot(put_json_auth(
-            "/api/cost-rates",
+            "/api/cost_rates/DESIGN",
             &viewer,
-            json!({ "workCategoryCode": "DESIGN", "hourlyRate": 1000 }),
+            json!({ "hourlyRate": 1000 }),
         ))
         .await
         .unwrap();
@@ -2781,7 +2783,7 @@ async fn editor_creates_a_work_log_with_snapshotted_rate() {
         router
             .clone()
             .oneshot(post_json_auth(
-                "/api/work-logs",
+                "/api/work_logs",
                 &editor,
                 json!({
                     "projectId": project_id,
@@ -2799,7 +2801,7 @@ async fn editor_creates_a_work_log_with_snapshotted_rate() {
 
     let denied = router
         .oneshot(post_json_auth(
-            "/api/work-logs",
+            "/api/work_logs",
             "not-a-token",
             json!({ "projectId": project_id }),
         ))
@@ -2847,7 +2849,7 @@ async fn trip_generation_creates_rows_and_records_the_counts() {
         router
             .clone()
             .oneshot(post_json_auth(
-                "/api/work-logs/list",
+                "/api/work_logs/list",
                 &editor,
                 json!(ListParams::default()),
             ))
@@ -2887,7 +2889,7 @@ async fn viewer_cannot_write_work_logs_expenses_or_trips() {
 
     for (path, payload) in [
         (
-            "/api/work-logs",
+            "/api/work_logs",
             json!({ "projectId": 1, "workedOn": "2026-08-20", "workCategoryCode": "DESIGN", "minutes": 60 }),
         ),
         (

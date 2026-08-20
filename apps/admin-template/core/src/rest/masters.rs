@@ -61,7 +61,10 @@ async fn cost_rates_update(
 fn masters_read_router(masters: MastersService, auth: AuthState) -> Router {
     Router::new()
         .route("/api/work_categories/list", post(work_categories_list))
-        .route("/api/expense_categories/list", post(expense_categories_list))
+        .route(
+            "/api/expense_categories/list",
+            post(expense_categories_list),
+        )
         .with_state(masters)
         .layer(middleware::from_fn_with_state(auth, require_auth))
 }
@@ -78,7 +81,10 @@ fn masters_write_router(
         auth: auth.clone(),
     };
     Router::new()
-        .route("/api/cost_rates/{id}", axum::routing::put(cost_rates_update))
+        .route(
+            "/api/cost_rates/{id}",
+            axum::routing::put(cost_rates_update),
+        )
         .with_state(state)
         .layer(middleware::from_fn_with_state(
             RoleGuard {

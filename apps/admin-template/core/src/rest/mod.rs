@@ -229,7 +229,9 @@ use crate::backup::BackupService;
 use crate::customers::{Customer, CustomerInput, CustomersService};
 use crate::expenses::{Expense, ExpenseInput, ExpensesService};
 use crate::items::{ImportResult, Item, ItemImportRow, ItemInput, ItemsService};
-use crate::masters::{CostRateInput, CostRateValues, ExpenseCategory, MastersService, WorkCategory};
+use crate::masters::{
+    CostRateInput, CostRateValues, ExpenseCategory, MastersService, WorkCategory,
+};
 use crate::projects::{Project, ProjectInput, ProjectsService};
 use crate::settings::SettingsService;
 use crate::system_info::SystemInfoService;

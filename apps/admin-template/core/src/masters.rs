@@ -187,22 +187,22 @@ impl MastersService {
             today_expr(dialect),
             today_expr(dialect),
         );
+        // 各アームで `rows_affected` に落として、SQLite / Postgres の
+        // クエリ結果型を揃える（`items.rs` の delete と同じ書き方）。
         match &self.db {
-            Db::Sqlite(pool) => {
-                sqlx::query(&sql)
-                    .bind(&code)
-                    .bind(input.hourly_rate)
-                    .execute(pool)
-                    .await
-            }
+            Db::Sqlite(pool) => sqlx::query(&sql)
+                .bind(&code)
+                .bind(input.hourly_rate)
+                .execute(pool)
+                .await
+                .map(|r| r.rows_affected()),
             #[cfg(feature = "postgres")]
-            Db::Postgres(pool) => {
-                sqlx::query(&sql)
-                    .bind(&code)
-                    .bind(input.hourly_rate)
-                    .execute(pool)
-                    .await
-            }
+            Db::Postgres(pool) => sqlx::query(&sql)
+                .bind(&code)
+                .bind(input.hourly_rate)
+                .execute(pool)
+                .await
+                .map(|r| r.rows_affected()),
         }
         .map_err(banto_storage::storage_error)?;
         self.notify_changed();
