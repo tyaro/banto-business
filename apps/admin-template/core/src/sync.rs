@@ -144,6 +144,49 @@ pub async fn set_device_id(
     settings.set(DEVICE_ID_KEY, &device_id.to_string()).await
 }
 
+/// 墓石に入れる時刻の SQL 式（**両方言とも TEXT に落とす**）。
+///
+/// `deleted_at` は TEXT 列なので、PostgreSQL では明示的に `::text` へ落とす
+/// 必要がある。`Dialect::now_expr()` は PostgreSQL で `NOW()`（timestamptz）を
+/// 返すため、そのまま TEXT 列へ入れると型エラーになる —— 各サービスが
+/// `today_expr` を自前で持ち `CURRENT_DATE::text` と書いているのと同じ理由。
+///
+/// 業務日付（`worked_on` 等）と違い、こちらは**日付ではなく日時**にする。
+/// 墓石は同期の順序を追うための記録で、同じ日に消して作り直した行を
+/// 区別できないと困る。
+pub fn deleted_at_expr(dialect: banto_storage::Dialect) -> &'static str {
+    match dialect {
+        banto_storage::Dialect::Sqlite => "datetime('now')",
+        banto_storage::Dialect::Postgres => "NOW()::text",
+    }
+}
+
+/// 論理削除された行を除いた**派生表**を組み立てる（`docs/domain/sync.md` 5節）。
+///
+/// ```text
+/// SELECT id, ... FROM (SELECT * FROM work_logs WHERE deleted_at IS NULL) AS work_logs
+/// ```
+///
+/// 基底の `SELECT ... FROM work_logs` に直接 `WHERE deleted_at IS NULL` を
+/// 足せないのは、一覧が `banto_storage::list_query` の `append_where` で
+/// **後から `WHERE` 句を継ぎ足す**ため。絞り込み付きの一覧で
+/// `... WHERE deleted_at IS NULL WHERE code = ?` になってしまう。
+///
+/// `append_where` 側に「基底の述語」を渡せるようにするのが本筋だが、
+/// あれは同梱している Banto のコードで、Business 都合では書き換えない
+/// （`CLAUDE.md` 第3章）。`docs/banto-feedback.md` に記録した。
+///
+/// 派生表で包むと、外側にどんな絞り込みが付いても**削除済みの行が見えることは
+/// 原理的に無い**。フィルタとして差し込む方式（`deletedAt is_null` を
+/// `params.filters` へ push する）も考えられるが、`deletedAt` を絞り込み可能な
+/// 列として公開することになり、呼び出し側の書き方次第で墓石が見えてしまう。
+///
+/// 別名を元の表名に揃えているのは、外側の `ORDER BY` や絞り込みが列名を
+/// そのまま使えるようにするため。PostgreSQL は派生表に別名を要求する。
+pub fn live(table: &str) -> String {
+    format!("(SELECT * FROM {table} WHERE deleted_at IS NULL) AS {table}")
+}
+
 /// 採番カウンタをこの端末のレンジ先頭まで進める。
 ///
 /// SQLite の `AUTOINCREMENT` は `sqlite_sequence.seq` の次の値を採番するので、

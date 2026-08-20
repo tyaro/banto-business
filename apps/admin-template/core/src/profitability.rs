@@ -173,7 +173,7 @@ const WORK_TOTALS_SQL: &str = "SELECT \
          THEN w.minutes ELSE 0 END), 0) AS BIGINT) AS excluded_minutes \
      FROM work_logs w \
      LEFT JOIN work_categories c ON c.code = w.work_category_code \
-     WHERE w.project_id = ";
+     WHERE w.deleted_at IS NULL AND w.project_id = ";
 
 /// 採算のサービス層（conventions §2）。読み取り専用 — 採算値を保持しない
 /// （F-P7）ので、書き込みの入口もイベント通知も持たない。
@@ -269,7 +269,8 @@ impl ProfitabilityService {
     async fn expense_rows(&self, project_id: i64) -> Result<Vec<ExpenseRow>, BantoError> {
         let dialect = self.db.dialect();
         let sql = format!(
-            "SELECT amount, tax_category, billable, invoiced FROM expenses WHERE project_id = {}",
+            "SELECT amount, tax_category, billable, invoiced FROM expenses \
+             WHERE project_id = {} AND deleted_at IS NULL",
             dialect.placeholder(1)
         );
         match &self.db {
@@ -456,6 +457,61 @@ mod tests {
             billable: false,
             invoiced: false,
         }
+    }
+
+    /// **論理削除が採算へ波及しないこと**（`docs/domain/sync.md` 5節）。
+    ///
+    /// 採算は `work_logs` / `expenses` を直接集計するので、`deleted_at IS NULL`
+    /// の入れ忘れがそのまま「消したはずの行が原価に乗る」になる。しかも画面上は
+    /// 何も起きないので気付けない。ここで固定する。
+    #[tokio::test]
+    async fn deleted_rows_drop_out_of_the_profitability_totals() {
+        let f = fixture().await;
+        f.work_logs
+            .create(work_log(f.project_id, "DESIGN", 60))
+            .await
+            .expect("残す工数");
+        let doomed_work = f
+            .work_logs
+            .create(work_log(f.project_id, "DESIGN", 120))
+            .await
+            .expect("消す工数");
+        f.expenses
+            .create(expense(f.project_id, 1_100, "STANDARD_10"))
+            .await
+            .expect("残す経費");
+        let doomed_expense = f
+            .expenses
+            .create(expense(f.project_id, 5_500, "STANDARD_10"))
+            .await
+            .expect("消す経費");
+
+        let before = f.profitability.get(f.project_id).await.expect("before");
+        assert_eq!(before.total_minutes, 180);
+
+        f.work_logs
+            .delete(doomed_work.id)
+            .await
+            .expect("delete 工数");
+        f.expenses
+            .delete(doomed_expense.id)
+            .await
+            .expect("delete 経費");
+
+        let after = f.profitability.get(f.project_id).await.expect("after");
+        assert_eq!(after.total_minutes, 60, "削除した工数が分数に残っている");
+        assert!(
+            after.work_cost < before.work_cost,
+            "削除した工数が原価に残っている: {} → {}",
+            before.work_cost,
+            after.work_cost
+        );
+        // 経費は税抜換算されるので、残るのは 1,100 円ぶんだけ。
+        assert_eq!(
+            after.expense_cost,
+            taxable_amount(1_100, "STANDARD_10"),
+            "削除した経費が原価に残っている"
+        );
     }
 
     #[test]

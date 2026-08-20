@@ -1381,7 +1381,8 @@ impl InvoicesService {
              FROM work_logs w \
              JOIN projects p ON p.id = w.project_id \
              LEFT JOIN work_categories c ON c.code = w.work_category_code \
-             WHERE p.customer_id = {} AND w.invoiced = 0 AND w.worked_on >= {} \
+             WHERE p.customer_id = {} AND w.deleted_at IS NULL AND w.invoiced = 0 \
+             AND w.worked_on >= {} \
              AND w.worked_on <= {} ORDER BY w.project_id, w.worked_on, w.id",
             dialect.placeholder(1),
             dialect.placeholder(2),
@@ -1393,7 +1394,8 @@ impl InvoicesService {
              FROM expenses e \
              JOIN projects p ON p.id = e.project_id \
              LEFT JOIN expense_categories c ON c.code = e.expense_category_code \
-             WHERE p.customer_id = {} AND e.billable = 1 AND e.invoiced = 0 \
+             WHERE p.customer_id = {} AND e.deleted_at IS NULL AND e.billable = 1 \
+             AND e.invoiced = 0 \
              AND e.spent_on >= {} AND e.spent_on <= {} \
              ORDER BY e.project_id, e.spent_on, e.id",
             dialect.placeholder(1),
@@ -1890,6 +1892,77 @@ mod tests {
             }
             other => panic!("unexpected: {other:?}"),
         }
+    }
+
+    /// **論理削除が請求候補へ波及しないこと**（`docs/domain/sync.md` 5節）。
+    ///
+    /// ここが漏れると、**消したはずの工数・経費が取引先への請求書に載る**。
+    /// 候補の段階で気付ければよいが、まとめて選ぶ操作なので見落としやすい。
+    #[tokio::test]
+    async fn deleted_rows_are_not_offered_as_invoice_candidates() {
+        let f = fixture().await;
+        let doomed_work = f
+            .work_logs
+            .create(WorkLogInput {
+                project_id: f.project_id,
+                trip_id: None,
+                worked_on: "2026-08-20".to_string(),
+                work_category_code: "DESIGN".to_string(),
+                minutes: 90,
+                applied_rate: None,
+                description: None,
+                invoiced: false,
+            })
+            .await
+            .expect("work log");
+        let doomed_expense = f
+            .expenses
+            .create(ExpenseInput {
+                project_id: f.project_id,
+                trip_id: None,
+                spent_on: "2026-08-21".to_string(),
+                expense_category_code: "TRANSPORT".to_string(),
+                payee: None,
+                amount: 11_000,
+                tax_category: Some("STANDARD_10".to_string()),
+                description: None,
+                billable: true,
+                invoiced: false,
+            })
+            .await
+            .expect("billable expense");
+
+        let query = CandidateQuery {
+            customer_id: f.customer_id,
+            from: "2026-08-01".to_string(),
+            to: "2026-08-31".to_string(),
+        };
+        assert_eq!(
+            f.invoices
+                .candidates(query.clone())
+                .await
+                .expect("before")
+                .len(),
+            2
+        );
+
+        f.work_logs
+            .delete(doomed_work.id)
+            .await
+            .expect("delete 工数");
+        f.expenses
+            .delete(doomed_expense.id)
+            .await
+            .expect("delete 経費");
+
+        assert!(
+            f.invoices
+                .candidates(query)
+                .await
+                .expect("after")
+                .is_empty(),
+            "削除した行が請求候補に残っている"
+        );
     }
 
     #[tokio::test]
