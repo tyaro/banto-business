@@ -1,3 +1,16 @@
+> **このリポジトリは Banto Business（個人事業の案件管理デスクトップアプリ）です。**
+>
+> 顧客 → 案件 → 工数/経費 → 案件原価 → 請求 → 入金 → 案件採算 を一元管理する。会計ソフトではない（複式簿記・決算・確定申告は範囲外）。
+>
+> - 常時適用規約: [CLAUDE.md](CLAUDE.md)
+> - 開発手順: [AGENTS.md](AGENTS.md)
+> - 開発計画・ドメイン設計: [docs/plan.md](docs/plan.md) / 税計算仕様: [docs/tax-calculation.md](docs/tax-calculation.md)
+> - 派生元と上流追随の記録: [docs/template-origin.md](docs/template-origin.md)
+>
+> 以下は**同梱している Banto テンプレート本体の README**（`tyaro/banto` の `f471ff1` 由来）。上流との差分を取りやすくするため原文のまま保持している。デモサイトや配布手順など、Banto 本体に関する記述は Banto Business には適用されない。
+
+---
+
 # Banto（番頭）
 
 Tauri v2 + SvelteKit（Svelte 5 Runes）向けのフルスタック管理画面

@@ -49,7 +49,7 @@
 		</span>
 		<!-- "Banto" is the product brand (owner-fixed): kept as a component
 		     constant, never keyed (PR-B2 scope rule). -->
-		<span class="brand-name">Banto</span>
+		<span class="brand-name">Banto Business</span>
 	</div>
 
 	<nav class="nav-section" aria-label={m['shell.mainNav']()}>

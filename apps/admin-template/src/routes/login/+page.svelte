@@ -117,14 +117,14 @@
 					<rect x="10" y="19" width="4" height="2" rx="1" />
 				</svg>
 			</span>
-			<p class="brand-name">Banto</p>
+			<p class="brand-name">Banto Business</p>
 			<p class="tagline">{m['auth.tagline']()}</p>
 		</aside>
 
 		<div class="form-pane">
 			{#if mode === 'setup'}
 				<form onsubmit={submitSetup}>
-					<h1>Banto</h1>
+					<h1>Banto Business</h1>
 					<p class="note">{m['auth.setupNote']()}</p>
 
 					<label>
@@ -167,7 +167,7 @@
 				</form>
 			{:else if mode === 'login'}
 				<form onsubmit={submitLogin}>
-					<h1>Banto</h1>
+					<h1>Banto Business</h1>
 					<p class="note">
 						{m['auth.loginNote']()}
 					</p>

@@ -8,78 +8,98 @@ Banto Business の開発手順書。AIエージェント・開発者共通。
 
 ## 1. リポジトリ構成
 
+Banto を**同梱（vendoring）**したモノレポ構成。`crates/*` と `packages/*` は Banto 由来のため **Business 都合で書き換えない**（CLAUDE.md 第3章）。
+
 ```
 banto-business/
-├── CLAUDE.md              # 常時適用規約（最優先）
-├── AGENTS.md              # このファイル
+├── CLAUDE.md                 # 常時適用規約（最優先）
+├── AGENTS.md                 # このファイル
 ├── docs/
-│   ├── plan.md            # 開発計画書
-│   ├── tax-calculation.md # 税計算仕様（Phase 1で確定）
-│   ├── banto-feedback.md  # Bantoへのフィードバックログ（Phase 2から記録）
-│   ├── template-origin.md # テンプレート派生元とマージ判断の記録
-│   ├── domain/            # Phase 1 成果物（ER図・状態遷移・用語集）
-│   └── adr/               # 設計判断記録
-├── src/                   # SvelteKit フロントエンド
-│   ├── lib/
-│   │   ├── domain/        # ドメイン型定義
-│   │   ├── features/      # 機能単位（customer / project / worklog / ...）
-│   │   └── components/    # Business固有UI（汎用UIはBantoから）
-│   └── routes/
-├── src-tauri/             # Rust バックエンド
-│   ├── src/
-│   │   ├── domain/        # ドメインロジック（採算・税計算・消込）
-│   │   ├── repository/    # 永続化
-│   │   └── commands/      # Tauri コマンド
-│   └── migrations/
-└── tests/
+│   ├── plan.md               # 開発計画書
+│   ├── tax-calculation.md    # 税計算仕様（Phase 1で確定）
+│   ├── banto-feedback.md     # Bantoへのフィードバックログ
+│   ├── template-origin.md    # 派生元コミットとマージ判断の記録
+│   ├── domain/               # Phase 1 成果物（ER図・状態遷移・用語集）
+│   ├── adr/                  # 設計判断記録
+│   └── （その他は Banto 由来のテンプレート文書）
+├── crates/                   # ★Banto 由来（改変しない）
+│   └── banto-{core,storage,server,attachments,admin-services}
+├── packages/                 # ★Banto 由来（改変しない）
+│   └── @banto/{admin-core,grid-svelte,forms,charts,report,theme,...}
+├── apps/admin-template/      # アプリ本体（ディレクトリ名は Phase 0 決定で維持）
+│   ├── core/                 # Rust ドメイン/サービス層（tauri/axum 非依存）
+│   │   ├── src/
+│   │   │   ├── domain/       # ★Business：採算・税計算・消込（純粋関数）
+│   │   │   ├── <resource>.rs # ★Business：サービス層（customer.rs 等）
+│   │   │   └── rest/         # ★Business：REST ルート
+│   │   ├── migrations-sqlite/
+│   │   └── migrations-postgres/
+│   ├── src-tauri/src/lib.rs  # Tauri コマンド（薄く保つ）
+│   └── src/                  # SvelteKit フロントエンド
+│       ├── lib/banto/resources/  # ★Business：リソース定義（スキーマ）
+│       ├── lib/components/       # ★Business固有UI（汎用UIは @banto/* から）
+│       └── routes/(app)/<resource>/
+└── e2e/
 ```
+
+**新しい CRUD リソースの追加は `docs/recipes/add-resource.md` の手順に従う**（`items` のルート一式をコピーして書き換えるのが Banto の正式方式。動的ルート生成は不採用）。
 
 ### ディレクトリ責務
 
-| ディレクトリ | 置くもの | 置かないもの |
-|---|---|---|
-| `src-tauri/src/domain/` | 採算計算・税計算・消込ロジック（純粋関数中心） | DB / Tauri 依存 |
-| `src-tauri/src/repository/` | SQLクエリ・永続化 | 業務ロジック |
-| `src-tauri/src/commands/` | Tauriコマンド定義（薄く保つ） | 業務ロジック |
-| `src/lib/features/` | 画面単位のロジック | 汎用UIコンポーネント |
-| `src/lib/components/` | Business固有UI | Bantoが提供済みのUI |
+| ディレクトリ                                   | 置くもの                                                                              | 置かないもの        |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------- | ------------------- |
+| `apps/admin-template/core/src/domain/`         | 採算計算・税計算・消込ロジック（純粋関数中心）                                        | DB / Tauri 依存     |
+| `apps/admin-template/core/src/<resource>.rs`   | SQLクエリ・永続化・CRUD（sqlx。`column_map()` でソート/フィルタ列をホワイトリスト化） | 金額の業務ロジック  |
+| `apps/admin-template/core/src/rest/`           | REST ルーティング（`RoleGuard` + `record_write`）                                     | 業務ロジック        |
+| `apps/admin-template/src-tauri/src/lib.rs`     | Tauriコマンド定義（薄く保つ。REST と**同一の**認可・監査）                            | 業務ロジック        |
+| `apps/admin-template/src/lib/banto/resources/` | リソース定義・スキーマ                                                                | 金額計算            |
+| `apps/admin-template/src/lib/components/`      | Business固有UI                                                                        | Bantoが提供済みのUI |
+| `crates/` `packages/`                          | （Banto 由来。触らない）                                                              | Business のコード   |
 
-**金額計算は必ず `src-tauri/src/domain/` に置く。フロントエンドで金額計算をしない。**
+**金額計算は必ず `apps/admin-template/core/src/domain/` に置く。フロントエンドで金額計算をしない。**
 （表示フォーマットのみフロント側で行う）
 
 ---
 
 ## 2. 使用 Banto バージョン
 
-| 項目 | 値 |
-|---|---|
-| Banto タグ | `vX.Y.Z` ← Phase 0 で記入 |
-| 派生元テンプレートタグ | `vX.Y.Z` ← Phase 0 で記入 |
-| 最終確認日 | YYYY-MM-DD |
+| 項目           | 値                                                              |
+| -------------- | --------------------------------------------------------------- |
+| 依存方式       | **同梱（vendoring）＋派生元コミット固定**（CLAUDE.md 第3章）    |
+| 派生元コミット | `f471ff1`（`tyaro/banto` main、2026-08-15）                     |
+| 派生元タグ     | なし（`v1.2.0` + 35 コミット。バージョン表記は `1.2.0` のまま） |
+| 最終確認日     | 2026-08-19                                                      |
 
 更新手順は `docs/template-origin.md` を参照。
 
 ### 利用中の Banto パッケージ
 
-Phase 0 以降、実際に採用したものだけを記載する。
+同梱しているため全て利用可能。下表の「配線」は**テンプレート既定でアプリに配線済みか**（`apps/admin-template/src` からの import 実績）、「Business での用途」は本アプリで担わせる役割。
 
 **フロントエンド**
 
-- [ ] `@banto/admin-core`
-- [ ] `@banto/grid-svelte`
-- [ ] `@banto/forms`
-- [ ] `@banto/charts`
-- [ ] `@banto/dock-svelte`
-- [ ] `@banto/report`
-- [ ] `@banto/attachments`
+| パッケージ           | 配線             | Business での用途                                                |
+| -------------------- | ---------------- | ---------------------------------------------------------------- |
+| `@banto/admin-core`  | 済（33ファイル） | アプリシェル・CRUD 基盤・リソース定義                            |
+| `@banto/grid-svelte` | 済（8）          | 一覧（案件 / 工数 / 請求 / 入金）                                |
+| `@banto/forms`       | 済（5）          | 入力フォーム全般                                                 |
+| `@banto/theme`       | 済（3）          | テーマ                                                           |
+| `@banto/dock-svelte` | 済（3）          | ダッシュボードパネル（Phase 4 以降）                             |
+| `@banto/charts`      | 済（3）          | Phase 4：案件採算のグラフ                                        |
+| `@banto/report`      | 済（2）          | Phase 5：適格請求書 PDF                                          |
+| `@banto/attachments` | 済（3）          | Phase 3：領収書の参照コピー（正本は会計ソフト側／CLAUDE.md 1.6） |
+| `@banto/tree-svelte` | 済（3）          | 現時点で用途なし（テンプレート由来のまま）                       |
+| `@banto/scan-wedge`  | 未配線           | 用途なし（同梱のまま保持）                                       |
 
 **Rust**
 
-- [ ] `banto-core`
-- [ ] `banto-storage`
-- [ ] `banto-server`
-- [ ] `banto-admin-services`
-- [ ] `banto-attachments`
+| クレート               | 用途                              |
+| ---------------------- | --------------------------------- |
+| `banto-core`           | 共通型・`BantoError`              |
+| `banto-storage`        | 永続化（SQLite。`list_query` 等） |
+| `banto-server`         | LAN 向け REST サーバ              |
+| `banto-admin-services` | settings / audit / users（RBAC）  |
+| `banto-attachments`    | Phase 3：領収書添付               |
 
 ---
 
@@ -140,9 +160,9 @@ Trip
 
 実質時間単価は **2種を必ず併記**：
 
-| 指標 | 分母 |
-|---|---|
-| 移動込み | 全WorkLog時間 |
+| 指標     | 分母                            |
+| -------- | ------------------------------- |
+| 移動込み | 全WorkLog時間                   |
 | 移動除く | 分類「移動」を除いたWorkLog時間 |
 
 片方のみを返すAPIを作らない。
@@ -173,7 +193,8 @@ Draft → Issued → Partially Paid ⇄ Paid
 
 ## 4. DB Migration ルール
 
-- ファイル名：`migrations/NNNN_snake_case_description.sql`
+- 配置：`apps/admin-template/core/migrations-sqlite/NNNN_snake_case_description.sql`
+- **SQLite と Postgres の2方言を必ず対で追加する**（`migrations-postgres/` に同名・同連番。`pnpm verify:architecture` の rule 11 が機械検査する）
 - **適用済みマイグレーションは編集しない。** 変更は新規ファイルで
 - 前方向のみ。down migration は用意しない（Backup/Restore で対応）
 - 金額カラム：`INTEGER NOT NULL`
@@ -187,13 +208,13 @@ Draft → Issued → Partially Paid ⇄ Paid
 
 ### 必須
 
-| 対象 | 理由 |
-|---|---|
-| 案件採算計算 | 意思決定に直結 |
+| 対象                               | 理由                         |
+| ---------------------------------- | ---------------------------- |
+| 案件採算計算                       | 意思決定に直結               |
 | 税計算（税率区分別集計・端数処理） | 対外文書。誤りが取引先に届く |
-| Payment 消込 | 4種の差額パターン全て |
-| Overdue 導出の境界条件 | 期限当日 / 残額0 / Cancelled |
-| Trip 一括生成 | 生成件数と内訳 |
+| Payment 消込                       | 4種の差額パターン全て        |
+| Overdue 導出の境界条件             | 期限当日 / 残額0 / Cancelled |
+| Trip 一括生成                      | 生成件数と内訳               |
 
 ### 任意
 
@@ -228,24 +249,26 @@ Draft → Issued → Partially Paid ⇄ Paid
 
 ## 7. Phase 進行
 
-現在の Phase：**Phase 0**
+現在の Phase：**Phase 1（要件・ドメイン設計）**
 
-| Phase | 内容 | 状態 |
-|---|---|---|
-| 0 | リポジトリ作成・テンプレート派生 | 未着手 |
-| 1 | 要件・ドメイン設計 | 未着手 |
-| 2 | 基本マスター（Customer / Project） | 未着手 |
-| 3 | 工数・経費（WorkLog / Trip / Expense） | 未着手 |
-| 4 | 採算管理 | 未着手 |
-| 5 | 請求（Invoice / PDF） | 未着手 |
-| 6 | 入金管理（Payment） | 未着手 |
-| 7 | 実運用評価 | 未着手 |
+| Phase | 内容                                   | 状態   |
+| ----- | -------------------------------------- | ------ |
+| 0     | リポジトリ作成・テンプレート派生       | 完了   |
+| 1     | 要件・ドメイン設計                     | 着手可 |
+| 2     | 基本マスター（Customer / Project）     | 未着手 |
+| 3     | 工数・経費（WorkLog / Trip / Expense） | 未着手 |
+| 4     | 採算管理                               | 未着手 |
+| 5     | 請求（Invoice / PDF）                  | 未着手 |
+| 6     | 入金管理（Payment）                    | 未着手 |
+| 7     | 実運用評価                             | 未着手 |
+
+Phase 0 完了条件「空の Banto Business アプリが起動すること」は 2026-08-19 に Windows 実機（`pnpm --filter banto-business-app tauri dev`）で確認済み。CI は ubuntu / windows 双方でコンパイル・テストを検証している。
 
 **Phase 1 が確定するまで Phase 2 以降のテーブルを先行実装しない。**
 
 各 Phase 完了時に：
 
-1. `docs/banto-feedback.md` を更新（Phase 2 以降）
+1. `docs/banto-feedback.md` を更新（Phase 2 以降。それ以前も気づいた時点で記録する）
 2. このテーブルの状態を更新
 3. 完了条件を満たしているか `docs/plan.md` 第18章と照合
 
