@@ -1004,7 +1004,7 @@ impl InvoicesService {
         let dialect = self.db.dialect();
         let sql = format!(
             "SELECT closing_day, payment_month_offset, payment_day, name, billing_name \
-             FROM customers WHERE id = {}",
+             FROM customers WHERE id = {} AND deleted_at IS NULL",
             dialect.placeholder(1)
         );
         let found = match &self.db {
@@ -1040,7 +1040,8 @@ impl InvoicesService {
     ) -> Result<(), BantoError> {
         let dialect = self.db.dialect();
         let sql = format!(
-            "SELECT COUNT(*) FROM projects WHERE id = {} AND customer_id = {}",
+            "SELECT COUNT(*) FROM projects WHERE id = {} AND customer_id = {} \
+             AND deleted_at IS NULL",
             dialect.placeholder(1),
             dialect.placeholder(2)
         );
@@ -1379,7 +1380,7 @@ impl InvoicesService {
             "SELECT w.id, w.project_id, p.code AS project_code, p.name AS project_name, \
              p.billing_hourly_rate, w.worked_on, c.name AS category_name, w.minutes \
              FROM work_logs w \
-             JOIN projects p ON p.id = w.project_id \
+             JOIN projects p ON p.id = w.project_id AND p.deleted_at IS NULL \
              LEFT JOIN work_categories c ON c.code = w.work_category_code \
              WHERE p.customer_id = {} AND w.deleted_at IS NULL AND w.invoiced = 0 \
              AND w.worked_on >= {} \
@@ -1392,7 +1393,7 @@ impl InvoicesService {
             "SELECT e.id, e.project_id, p.code AS project_code, p.name AS project_name, \
              e.spent_on, c.name AS category_name, e.amount, e.tax_category \
              FROM expenses e \
-             JOIN projects p ON p.id = e.project_id \
+             JOIN projects p ON p.id = e.project_id AND p.deleted_at IS NULL \
              LEFT JOIN expense_categories c ON c.code = e.expense_category_code \
              WHERE p.customer_id = {} AND e.deleted_at IS NULL AND e.billable = 1 \
              AND e.invoiced = 0 \

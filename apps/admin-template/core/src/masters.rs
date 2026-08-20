@@ -102,13 +102,20 @@ impl MastersService {
         }
     }
 
+    // 分類・レートは `delete` の入口を持たない（固定コード表なので画面から
+    // 消せない）。それでも読み取りは `deleted_at IS NULL` で絞る —— 同期で
+    // 相手端末から墓石が届く経路があり、そのとき絞っていないと**消したはずの
+    // 分類が受け側で生き返る**（`docs/domain/sync.md` 5節）。
+
     /// 作業分類の一覧（現在のレート付き）。`ListParams` を取らないのは、
     /// 10 件程度の固定コード表であり、絞り込み・ページングの意味が無いため
     /// （`items` のような一覧リソースとは性質が違う）。
     pub async fn list_work_categories(&self) -> Result<Vec<WorkCategory>, BantoError> {
         const SQL: &str = "SELECT c.code, c.name, c.excluded_from_effective_rate, c.sort_order, \
              c.active, r.hourly_rate \
-             FROM work_categories c LEFT JOIN cost_rates r ON r.work_category_code = c.code \
+             FROM work_categories c LEFT JOIN cost_rates r \
+               ON r.work_category_code = c.code AND r.deleted_at IS NULL \
+             WHERE c.deleted_at IS NULL \
              ORDER BY c.sort_order";
         match &self.db {
             Db::Sqlite(pool) => sqlx::query_as::<_, WorkCategory>(SQL).fetch_all(pool).await,
@@ -120,7 +127,7 @@ impl MastersService {
 
     pub async fn list_expense_categories(&self) -> Result<Vec<ExpenseCategory>, BantoError> {
         const SQL: &str = "SELECT code, name, default_tax_category, sort_order, active \
-             FROM expense_categories ORDER BY sort_order";
+             FROM expense_categories WHERE deleted_at IS NULL ORDER BY sort_order";
         match &self.db {
             Db::Sqlite(pool) => {
                 sqlx::query_as::<_, ExpenseCategory>(SQL)

@@ -303,8 +303,8 @@ impl CustomersService {
 
     pub async fn list(&self, params: ListParams) -> Result<ListResult<Customer>, BantoError> {
         let columns = column_map();
-        let select_rows = format!("SELECT {COLUMNS} FROM customers");
-        const SELECT_COUNT: &str = "SELECT COUNT(*) FROM customers";
+        let select_rows = format!("SELECT {COLUMNS} FROM {}", crate::sync::live("customers"));
+        let select_count = format!("SELECT COUNT(*) FROM {}", crate::sync::live("customers"));
 
         match &self.db {
             Db::Sqlite(pool) => {
@@ -320,7 +320,7 @@ impl CustomersService {
                     .await
                     .map_err(banto_storage::storage_error)?;
 
-                let mut count_builder: QueryBuilder<'_, Sqlite> = QueryBuilder::new(SELECT_COUNT);
+                let mut count_builder: QueryBuilder<'_, Sqlite> = QueryBuilder::new(&select_count);
                 banto_storage::list_query::sqlite::append_where(
                     &mut count_builder,
                     &columns,
@@ -353,7 +353,7 @@ impl CustomersService {
                     .map_err(banto_storage::storage_error)?;
 
                 let mut count_builder: QueryBuilder<'_, sqlx::Postgres> =
-                    QueryBuilder::new(SELECT_COUNT);
+                    QueryBuilder::new(&select_count);
                 banto_storage::list_query::postgres::append_where(
                     &mut count_builder,
                     &columns,
@@ -376,7 +376,7 @@ impl CustomersService {
     pub async fn get(&self, id: i64) -> Result<Customer, BantoError> {
         let dialect = self.db.dialect();
         let sql = format!(
-            "SELECT {COLUMNS} FROM customers WHERE id = {}",
+            "SELECT {COLUMNS} FROM customers WHERE id = {} AND deleted_at IS NULL",
             dialect.placeholder(1)
         );
         match &self.db {
@@ -487,46 +487,78 @@ impl CustomersService {
         Ok(customer)
     }
 
-    /// 顧客を削除する。案件が1件でも紐づいている場合は削除せず
-    /// `Validation` エラーを返す — 外部キーに任せて素の DB エラーを見せるより、
-    /// 「どの案件が残っているか」を利用者に伝えられるため（SQLite は既定で
-    /// 外部キー制約を強制しない構成もあり、方言差に依存しない判定にする狙いも
-    /// ある）。
+    /// 顧客を削除する（**論理削除**。`docs/domain/sync.md` 5節）。
+    ///
+    /// 案件が1件でも紐づいている場合は削除せず `Validation` エラーを返す —
+    /// 外部キーに任せて素の DB エラーを見せるより、「どの案件が残っているか」を
+    /// 利用者に伝えられるため（SQLite は既定で外部キー制約を強制しない構成も
+    /// あり、方言差に依存しない判定にする狙いもある）。
+    ///
+    /// **数えるのは生きている案件だけ。** 墓石を数えると、実際には何も
+    /// 残っていないのに「案件が2件あるため削除できません」と出て、
+    /// **永久に消せない顧客**ができる。
+    ///
+    /// 案件に加えて請求書・入金も数える。物理削除の頃はこの2つを見ていなくても
+    /// 外部キーが弾いていたが、論理削除では行が消えないので外部キーは何も
+    /// 言わない。放置すると、確定済みの請求書がぶら下がったまま顧客だけ
+    /// 見えなくなる。
     pub async fn delete(&self, id: i64) -> Result<(), BantoError> {
         let dialect = self.db.dialect();
-        let count_sql = format!(
-            "SELECT COUNT(*) FROM projects WHERE customer_id = {}",
-            dialect.placeholder(1)
-        );
-        let project_count: i64 = match &self.db {
-            Db::Sqlite(pool) => {
-                sqlx::query_scalar(&count_sql)
-                    .bind(id)
-                    .fetch_one(pool)
-                    .await
+        // (表示名, 表, 論理削除の対象か)。請求・入金は同期しないので
+        // `deleted_at` を持たない（`docs/domain/sync.md` 1節）。
+        let checks = [
+            ("案件", "projects", true),
+            ("請求書", "invoices", false),
+            ("入金", "payments", false),
+        ];
+        let mut blockers: Vec<String> = Vec::new();
+        for (label, table, soft_deletable) in checks {
+            let alive = if soft_deletable {
+                " AND deleted_at IS NULL"
+            } else {
+                ""
+            };
+            let count_sql = format!(
+                "SELECT COUNT(*) FROM {table} WHERE customer_id = {}{alive}",
+                dialect.placeholder(1)
+            );
+            let count: i64 = match &self.db {
+                Db::Sqlite(pool) => {
+                    sqlx::query_scalar(&count_sql)
+                        .bind(id)
+                        .fetch_one(pool)
+                        .await
+                }
+                #[cfg(feature = "postgres")]
+                Db::Postgres(pool) => {
+                    sqlx::query_scalar(&count_sql)
+                        .bind(id)
+                        .fetch_one(pool)
+                        .await
+                }
             }
-            #[cfg(feature = "postgres")]
-            Db::Postgres(pool) => {
-                sqlx::query_scalar(&count_sql)
-                    .bind(id)
-                    .fetch_one(pool)
-                    .await
+            .map_err(banto_storage::storage_error)?;
+            if count > 0 {
+                blockers.push(format!("{label}{count}件"));
             }
         }
-        .map_err(banto_storage::storage_error)?;
-        if project_count > 0 {
+        if !blockers.is_empty() {
             return Err(BantoError::Validation {
                 field_errors: vec![FieldError {
                     field: "id".to_string(),
                     message: format!(
-                        "この顧客には案件が{project_count}件あるため削除できません。先に案件を削除するか別の顧客へ付け替えてください"
+                        "この顧客には{}が紐づいているため削除できません。先に削除するか別の顧客へ付け替えてください",
+                        blockers.join("・")
                     ),
                 }],
             });
         }
 
+        let today = today_expr(dialect);
         let sql = format!(
-            "DELETE FROM customers WHERE id = {}",
+            "UPDATE customers SET deleted_at = {}, updated_at = {today} WHERE id = {} \
+             AND deleted_at IS NULL",
+            crate::sync::deleted_at_expr(dialect),
             dialect.placeholder(1)
         );
         let rows_affected = match &self.db {
@@ -618,6 +650,145 @@ mod tests {
                 .collect(),
             other => panic!("expected Validation, got {other:?}"),
         }
+    }
+
+    /// **論理削除の基本形**（`docs/domain/sync.md` 5節）。
+    #[tokio::test]
+    async fn deleting_a_customer_is_a_soft_delete() {
+        let svc = service().await;
+        svc.create(valid_input("C001")).await.expect("残す");
+        let doomed = svc.create(valid_input("C002")).await.expect("消す").id;
+
+        svc.delete(doomed).await.expect("delete");
+
+        assert!(matches!(
+            svc.get(doomed).await.expect_err("墓石は get で返さない"),
+            BantoError::NotFound { .. }
+        ));
+        let listed = svc.list(ListParams::default()).await.unwrap();
+        assert_eq!(listed.total_count, 1);
+        assert_ne!(listed.rows[0].id, doomed);
+        assert!(svc.delete(doomed).await.is_err(), "二重削除が成功している");
+    }
+
+    /// **請求書がぶら下がっている顧客は消せない。**
+    ///
+    /// 物理削除の頃は外部キーが弾いていたが、論理削除では行が消えないので
+    /// 外部キーは何も言わない。放置すると、確定済みの請求書がぶら下がったまま
+    /// 顧客だけ見えなくなる。請求・入金は同期しないので墓石を持たない。
+    #[tokio::test]
+    async fn a_customer_with_invoices_cannot_be_deleted() {
+        let db = migrate_memory().await.expect("migrate_memory");
+        let customers = CustomersService::new(db.clone());
+        let customer = customers
+            .create(valid_input("C001"))
+            .await
+            .expect("customer");
+        let projects = ProjectsService::new(db.clone());
+        let project = projects
+            .create(ProjectInput {
+                code: "P001".to_string(),
+                customer_id: customer.id,
+                name: "架空案件".to_string(),
+                status: "IN_PROGRESS".to_string(),
+                started_on: None,
+                due_on: None,
+                estimate_amount: None,
+                contract_amount: None,
+                billing_hourly_rate: None,
+                scope: None,
+                note: None,
+            })
+            .await
+            .expect("project");
+
+        let invoices = crate::invoices::InvoicesService::new(db.clone());
+        invoices
+            .create(crate::invoices::InvoiceInput {
+                customer_id: customer.id,
+                closing_on: None,
+                due_on: None,
+                corrected_invoice_id: None,
+                note: None,
+                lines: vec![crate::invoices::InvoiceLineInput {
+                    project_id: project.id,
+                    item_name: "設計".to_string(),
+                    quantity: 1,
+                    unit_price: 100_000,
+                    tax_category: "STANDARD_10".to_string(),
+                    source_type: None,
+                    source_id: None,
+                    note: None,
+                }],
+            })
+            .await
+            .expect("invoice");
+
+        // 案件のほうは請求明細に参照されているので、そもそも消せない。
+        let project_err = projects
+            .delete(project.id)
+            .await
+            .expect_err("請求明細が参照している案件を消せている");
+        assert!(
+            field_errors(&project_err)[0].1.contains("請求明細1件"),
+            "{:?}",
+            field_errors(&project_err)
+        );
+
+        // 顧客は案件と請求書の両方が理由として挙がる。
+        let err = customers
+            .delete(customer.id)
+            .await
+            .expect_err("請求書が残っているのに顧客を消せている");
+        let (_, message) = field_errors(&err).into_iter().next().expect("field error");
+        assert!(message.contains("案件1件"), "{message}");
+        assert!(message.contains("請求書1件"), "{message}");
+    }
+
+    /// **墓石の案件が顧客の削除を永久にブロックしないこと。**
+    ///
+    /// 削除ガードが墓石まで数えると、実際には何も残っていないのに
+    /// 「案件が1件あるため削除できません」と出て、**二度と消せない顧客**が
+    /// できる。案件を論理削除にした時点でこの経路が踏めるようになった。
+    #[tokio::test]
+    async fn a_tombstoned_project_does_not_block_deleting_its_customer() {
+        let db = migrate_memory().await.expect("migrate_memory");
+        let customers = CustomersService::new(db.clone());
+        let customer = customers
+            .create(valid_input("C001"))
+            .await
+            .expect("customer");
+
+        let projects = ProjectsService::new(db.clone());
+        let project = projects
+            .create(ProjectInput {
+                code: "P001".to_string(),
+                customer_id: customer.id,
+                name: "架空案件".to_string(),
+                status: "IN_PROGRESS".to_string(),
+                started_on: None,
+                due_on: None,
+                estimate_amount: None,
+                contract_amount: None,
+                billing_hourly_rate: None,
+                scope: None,
+                note: None,
+            })
+            .await
+            .expect("project");
+
+        // 案件が生きているうちは拒否される（既存の挙動）。
+        assert!(
+            customers.delete(customer.id).await.is_err(),
+            "案件が残っているのに顧客を消せている"
+        );
+
+        // 案件を論理削除すると、顧客も消せるようになる。
+        projects.delete(project.id).await.expect("delete 案件");
+        customers
+            .delete(customer.id)
+            .await
+            .expect("墓石の案件が顧客の削除をブロックしている");
     }
 
     #[tokio::test]

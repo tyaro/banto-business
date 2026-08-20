@@ -195,7 +195,7 @@ const WORK_BY_DAY_SQL: &str = "SELECT w.worked_on, p.id AS project_id, \
      p.code AS project_code, p.name AS project_name, \
      CAST(COALESCE(SUM(w.minutes), 0) AS BIGINT) AS minutes, \
      CAST(COUNT(*) AS BIGINT) AS log_count \
-     FROM work_logs w JOIN projects p ON p.id = w.project_id \
+     FROM work_logs w JOIN projects p ON p.id = w.project_id AND p.deleted_at IS NULL \
      WHERE w.deleted_at IS NULL AND w.worked_on >= {0} AND w.worked_on <= {1} \
      GROUP BY w.worked_on, p.id, p.code, p.name \
      ORDER BY w.worked_on, minutes DESC, p.code";

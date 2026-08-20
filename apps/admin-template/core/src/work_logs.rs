@@ -261,7 +261,7 @@ impl WorkLogsService {
     ) -> Result<(), BantoError> {
         let dialect = self.db.dialect();
         let sql = format!(
-            "SELECT COUNT(*) FROM projects WHERE id = {}",
+            "SELECT COUNT(*) FROM projects WHERE id = {} AND deleted_at IS NULL",
             dialect.placeholder(1)
         );
         let count: i64 = match &self.db {

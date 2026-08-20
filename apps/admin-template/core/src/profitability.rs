@@ -224,7 +224,8 @@ impl ProfitabilityService {
     async fn project_header(&self, project_id: i64) -> Result<ProjectHeader, BantoError> {
         let dialect = self.db.dialect();
         let sql = format!(
-            "SELECT id, code, name, status, contract_amount FROM projects WHERE id = {}",
+            "SELECT id, code, name, status, contract_amount FROM projects \
+             WHERE id = {} AND deleted_at IS NULL",
             dialect.placeholder(1)
         );
         match &self.db {
