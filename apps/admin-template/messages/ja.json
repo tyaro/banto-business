@@ -652,5 +652,6 @@
   "invoices.settledAmount": "消込額",
   "invoices.settlementStatus": "入金状態",
   "invoices.settlementPaid": "入金済",
-  "invoices.settlementNote": "残額・入金状態・期限超過は充当の実績から都度算出しています（保持していません）。"
+  "invoices.settlementNote": "残額・入金状態・期限超過は充当の実績から都度算出しています（保持していません）。",
+  "outstanding.unavailable": "デモモードでは利用できません。単体ブラウザのデモモードには業務DBがないため、この一覧はTauriアプリまたはLANアクセス（組み込みサーバー）でのみ表示されます。"
 }

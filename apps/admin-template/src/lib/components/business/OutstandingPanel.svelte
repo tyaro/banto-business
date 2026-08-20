@@ -9,6 +9,7 @@
 	 */
 	import { getDataProvider } from '@banto/admin-core';
 	import type { ListParams } from '@banto/admin-core';
+	import { getBantoMode } from '$lib/banto/setup';
 	import { base } from '$app/paths';
 	import * as m from '$lib/paraglide/messages';
 	import LoadingState from '$lib/components/ui/LoadingState.svelte';
@@ -25,11 +26,21 @@
 		overdue: boolean;
 	}
 
+	// 単体ブラウザのデモモードには業務DBが無いので、`outstanding` を引きに
+	// 行かず「利用できません」と出す（`usersAdmin.ts` の `isUsersAdminAvailable`
+	// と同じ扱い）。取りに行くとエラー表示になり、動かないのか壊れているのか
+	// 見分けが付かない。
+	const available = getBantoMode() !== 'demo';
+
 	let rows = $state<Settlement[]>([]);
 	let loading = $state(true);
 	let failed = $state(false);
 
 	async function load() {
+		if (!available) {
+			loading = false;
+			return;
+		}
 		loading = true;
 		failed = false;
 		try {
@@ -58,14 +69,16 @@
 <section class="panel">
 	<header class="panel-header">
 		<h2>{m['outstanding.title']()}</h2>
-		{#if !loading && !failed}
+		{#if available && !loading && !failed}
 			<span class="summary">
 				{m['outstanding.summary']({ count: rows.length, overdue: overdueCount })}
 			</span>
 		{/if}
 	</header>
 
-	{#if loading}
+	{#if !available}
+		<p class="note note--muted">{m['outstanding.unavailable']()}</p>
+	{:else if loading}
 		<LoadingState label={m['common.loading']()} />
 	{:else if failed}
 		<ErrorState title={m['outstanding.loadError']()} description={m['resource.loadErrorDesc']()} />

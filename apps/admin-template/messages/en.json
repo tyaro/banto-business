@@ -652,5 +652,6 @@
   "invoices.settledAmount": "Settled",
   "invoices.settlementStatus": "Payment status",
   "invoices.settlementPaid": "Paid",
-  "invoices.settlementNote": "Remaining, payment status and overdue are derived from the allocations each time — they are never stored."
+  "invoices.settlementNote": "Remaining, payment status and overdue are derived from the allocations each time — they are never stored.",
+  "outstanding.unavailable": "Not available in demo mode. The browser-only demo has no business database, so this list only appears in the desktop app or over LAN access."
 }
