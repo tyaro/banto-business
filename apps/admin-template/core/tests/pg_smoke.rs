@@ -63,6 +63,8 @@ async fn reset_schema(url: &str) {
          expense_categories, projects, customers CASCADE",
         // Phase 8（同期の土台）。
         "DROP TABLE IF EXISTS sync_outbox, sync_state CASCADE",
+        // トリガ関数は表の DROP では消えない（CASCADE はトリガまで）。
+        "DROP FUNCTION IF EXISTS sync_record_change() CASCADE",
         "DROP TABLE IF EXISTS _sqlx_migrations",
     ] {
         sqlx::query(stmt)
@@ -638,4 +640,72 @@ async fn soft_delete_round_trips_on_postgres() {
 
     // 二重削除は NotFound。
     assert!(work_logs.delete(doomed.id).await.is_err());
+}
+
+/// **Phase 8: outbox トリガの PostgreSQL 経路。**
+///
+/// SQLite は表ごとに 2 トリガを直書きし、PostgreSQL はトリガ関数 1 つを 8 表で
+/// 共有して主キー列名を引数で渡す。**別の実装なので実際の PostgreSQL でしか
+/// 踏めない** —— 特に `format('SELECT ($1).%I::text', TG_ARGV[0])` による
+/// 動的な主キー取り出しは、ここでしか検証できない。
+#[tokio::test]
+async fn the_outbox_trigger_records_changes_on_postgres() {
+    let Ok(url) = std::env::var("BANTO_TEST_PG_URL") else {
+        eprintln!("pg_smoke: BANTO_TEST_PG_URL unset - skipping (no PostgreSQL server)");
+        return;
+    };
+    // 同じ DB を共有するので直列化する（`PG_SMOKE_LOCK` の doc を参照）。
+    let _serialized = PG_SMOKE_LOCK.lock().await;
+
+    reset_schema(&url).await;
+    let db = init_db_from_target(&url)
+        .await
+        .expect("init_db_from_target should succeed");
+
+    let customers = CustomersService::new(db.clone());
+    let customer = customers
+        .create(range_customer("PG-O001", "架空商事"))
+        .await
+        .expect("customer");
+    customers
+        .update(customer.id, range_customer("PG-O001", "架空商事（改称）"))
+        .await
+        .expect("update");
+    customers.delete(customer.id).await.expect("delete");
+
+    let entries = admin_template_core::sync::outbox_since(&db, 0)
+        .await
+        .expect("outbox on postgres");
+    let ops: Vec<&str> = entries
+        .iter()
+        .filter(|e| e.table_name == "customers")
+        .map(|e| e.op.as_str())
+        .collect();
+    assert_eq!(ops, vec!["INSERT", "UPDATE", "DELETE"]);
+
+    // 整数 PK は10進文字列で入る（TG_ARGV の動的取り出しが効いていること）。
+    assert!(
+        entries
+            .iter()
+            .filter(|e| e.table_name == "customers")
+            .all(|e| e.row_key == customer.id.to_string()),
+        "row_key が id と一致しない: {entries:?}"
+    );
+
+    // コード PK の表はコードそのもの。
+    MastersService::new(db.clone())
+        .set_cost_rate(CostRateInput {
+            work_category_code: "DESIGN".to_string(),
+            hourly_rate: 6_500,
+        })
+        .await
+        .expect("cost rate on postgres");
+    let entries = admin_template_core::sync::outbox_since(&db, 0)
+        .await
+        .expect("outbox");
+    let rate = entries
+        .iter()
+        .find(|e| e.table_name == "cost_rates")
+        .unwrap_or_else(|| panic!("レートの変更が記録されていない: {entries:?}"));
+    assert_eq!(rate.row_key, "DESIGN");
 }

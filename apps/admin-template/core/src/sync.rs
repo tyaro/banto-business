@@ -21,6 +21,7 @@
 
 use banto_core::{BantoError, FieldError};
 use banto_storage::Db;
+use serde::{Deserialize, Serialize};
 
 /// デバイス番号を保持する設定キー。
 pub const DEVICE_ID_KEY: &str = "sync.device.id";
@@ -187,6 +188,79 @@ pub fn live(table: &str) -> String {
     format!("(SELECT * FROM {table} WHERE deleted_at IS NULL) AS {table}")
 }
 
+/// outbox の1件（`docs/domain/sync.md` 4節）。
+///
+/// 書き込みは **DB トリガ**が行う（`migrations-*/0024_sync_outbox_triggers.sql`）。
+/// サービス層から積む形にしなかった理由はそのマイグレーションの冒頭に書いた ——
+/// 要点は、書き込みの入口が19箇所あり、1箇所忘れるとその変更が永久に同期
+/// されないため。ここにあるのは**読み取り側**だけ。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct OutboxEntry {
+    /// 端末内で単調増加する連番。同期の watermark。
+    pub seq: i64,
+    #[sqlx(rename = "table_name")]
+    pub table_name: String,
+    /// 整数 PK は10進文字列、コード PK はコードそのもの
+    /// （`docs/domain/sync.md` 3.0）。
+    #[sqlx(rename = "row_key")]
+    pub row_key: String,
+    /// `INSERT` / `UPDATE` / `DELETE`。`DELETE` は論理削除
+    /// （`deleted_at` が NULL から非 NULL になった UPDATE）を指す。
+    pub op: String,
+    #[sqlx(rename = "changed_at")]
+    pub changed_at: String,
+}
+
+/// 同期で1回に送る最大件数。
+///
+/// 上限を置くのは、初回同期で全件が1つの応答に載るのを避けるため。
+/// 続きは「最後に受け取った `seq`」から次を要求する。
+pub const OUTBOX_PAGE_SIZE: i64 = 500;
+
+const OUTBOX_COLUMNS: &str = "seq, table_name, row_key, op, changed_at";
+
+/// `after_seq` より後の変更を古い順に返す（最大 [`OUTBOX_PAGE_SIZE`] 件）。
+///
+/// **時計に依存しない。** `seq` は端末内で単調増加するので、相手が持っている
+/// 最後の `seq` を渡せば続きが漏れなく取れる。`updated_at` を watermark に
+/// 使わない理由は `docs/domain/sync.md` 4節。
+pub async fn outbox_since(db: &Db, after_seq: i64) -> Result<Vec<OutboxEntry>, BantoError> {
+    let dialect = db.dialect();
+    let sql = format!(
+        "SELECT {OUTBOX_COLUMNS} FROM sync_outbox WHERE seq > {} \
+         ORDER BY seq LIMIT {OUTBOX_PAGE_SIZE}",
+        dialect.placeholder(1)
+    );
+    match db {
+        Db::Sqlite(pool) => {
+            sqlx::query_as::<_, OutboxEntry>(&sql)
+                .bind(after_seq)
+                .fetch_all(pool)
+                .await
+        }
+        #[cfg(feature = "postgres")]
+        Db::Postgres(pool) => {
+            sqlx::query_as::<_, OutboxEntry>(&sql)
+                .bind(after_seq)
+                .fetch_all(pool)
+                .await
+        }
+    }
+    .map_err(banto_storage::storage_error)
+}
+
+/// この端末の outbox の最後の `seq`（空なら 0）。
+pub async fn outbox_head(db: &Db) -> Result<i64, BantoError> {
+    const SQL: &str = "SELECT CAST(COALESCE(MAX(seq), 0) AS BIGINT) FROM sync_outbox";
+    match db {
+        Db::Sqlite(pool) => sqlx::query_scalar::<_, i64>(SQL).fetch_one(pool).await,
+        #[cfg(feature = "postgres")]
+        Db::Postgres(pool) => sqlx::query_scalar::<_, i64>(SQL).fetch_one(pool).await,
+    }
+    .map_err(banto_storage::storage_error)
+}
+
 /// 採番カウンタをこの端末のレンジ先頭まで進める。
 ///
 /// SQLite の `AUTOINCREMENT` は `sqlite_sequence.seq` の次の値を採番するので、
@@ -262,6 +336,22 @@ mod tests {
     use crate::customers::{CustomerInput, CustomersService, DAY_END_OF_MONTH};
     use crate::db::migrate_memory;
     use crate::settings::SettingsService;
+
+    fn customer_input(code: &str, name: &str) -> CustomerInput {
+        CustomerInput {
+            code: code.to_string(),
+            name: name.to_string(),
+            contact_person: None,
+            address: None,
+            phone: None,
+            email: None,
+            billing_name: None,
+            closing_day: DAY_END_OF_MONTH,
+            payment_month_offset: 1,
+            payment_day: DAY_END_OF_MONTH,
+            note: None,
+        }
+    }
 
     // --- 純粋関数 ---
 
@@ -341,6 +431,260 @@ mod tests {
 
         settings.set(DEVICE_ID_KEY, "-5").await.expect("set");
         assert!(stored_device_id(&settings).await.is_err());
+    }
+
+    // --- outbox（記録は DB トリガ） ---
+
+    /// 素の作成・更新・論理削除が INSERT / UPDATE / DELETE として並ぶこと。
+    #[tokio::test]
+    async fn the_trigger_records_insert_update_and_logical_delete() {
+        let db = migrate_memory().await.unwrap();
+        let customers = CustomersService::new(db.clone());
+
+        let created = customers
+            .create(customer_input("C001", "架空商事"))
+            .await
+            .expect("create");
+        customers
+            .update(created.id, customer_input("C001", "架空商事（改称）"))
+            .await
+            .expect("update");
+        customers.delete(created.id).await.expect("delete");
+
+        let entries = outbox_since(&db, 0).await.expect("outbox");
+        let ops: Vec<&str> = entries.iter().map(|e| e.op.as_str()).collect();
+        assert_eq!(ops, vec!["INSERT", "UPDATE", "DELETE"]);
+        assert!(entries.iter().all(|e| e.table_name == "customers"));
+        assert!(
+            entries.iter().all(|e| e.row_key == created.id.to_string()),
+            "row_key は10進文字列の id: {entries:?}"
+        );
+        // seq は単調増加。
+        assert!(entries.windows(2).all(|w| w[0].seq < w[1].seq));
+    }
+
+    /// **サービス層を通らない書き込みも記録されること。**
+    ///
+    /// トリガにした一番の理由。`trips` の一括生成は `work_logs` / `expenses` を
+    /// 直接 INSERT し、`invoices` の確定・取消は `invoiced` を直接 UPDATE する。
+    /// サービス層に記録を足す設計だと、この4経路を忘れた時点で
+    /// **その変更が永久に同期されない**。
+    #[tokio::test]
+    async fn writes_that_bypass_the_service_layer_are_recorded_too() {
+        let db = migrate_memory().await.unwrap();
+        let customers = CustomersService::new(db.clone());
+        let customer = customers
+            .create(customer_input("C001", "架空商事"))
+            .await
+            .expect("customer");
+        let projects = crate::projects::ProjectsService::new(db.clone());
+        let project = projects
+            .create(crate::projects::ProjectInput {
+                code: "P001".to_string(),
+                customer_id: customer.id,
+                name: "架空案件".to_string(),
+                status: "IN_PROGRESS".to_string(),
+                started_on: None,
+                due_on: None,
+                estimate_amount: None,
+                contract_amount: None,
+                billing_hourly_rate: Some(10_000),
+                scope: None,
+                note: None,
+            })
+            .await
+            .expect("project");
+
+        // 一括生成はレートマスタを引くので、先に登録しておく。
+        let masters = crate::masters::MastersService::new(db.clone());
+        for code in ["TRAVEL", "ONSITE"] {
+            masters
+                .set_cost_rate(crate::masters::CostRateInput {
+                    work_category_code: code.to_string(),
+                    hourly_rate: 6_000,
+                })
+                .await
+                .expect("cost rate");
+        }
+
+        let before = outbox_head(&db).await.expect("head");
+
+        // 出張の一括生成 —— trips.rs が work_logs / expenses を直接 INSERT する。
+        let generated = crate::trips::TripsService::new(db.clone())
+            .create(crate::trips::TripInput {
+                project_id: project.id,
+                destination: "架空市".to_string(),
+                start_on: "2026-09-01".to_string(),
+                end_on: "2026-09-03".to_string(),
+                onsite_days: 3,
+                nights: 2,
+                note: None,
+                generate: Some(crate::trips::TripGenerationInput {
+                    travel_minutes_one_way: 180,
+                    onsite_minutes_per_day: 480,
+                    transport_amount: 24_000,
+                    lodging_amount_per_night: 9_500,
+                    billable: true,
+                }),
+            })
+            .await
+            .expect("trip generation");
+
+        let entries = outbox_since(&db, before).await.expect("outbox");
+        let count = |table: &str| entries.iter().filter(|e| e.table_name == table).count();
+        assert_eq!(count("trips"), 1, "出張そのもの");
+        assert_eq!(
+            count("work_logs"),
+            generated.travel_work_logs + generated.onsite_work_logs,
+            "生成した工数が記録されていない: {entries:?}"
+        );
+        assert_eq!(
+            count("expenses"),
+            generated.expenses,
+            "生成した経費が記録されていない"
+        );
+        assert!(
+            entries.iter().all(|e| e.op == "INSERT"),
+            "生成は全て INSERT のはず: {entries:?}"
+        );
+    }
+
+    /// 請求の確定・取消による `invoiced` の書き換えも記録される
+    /// （`invoices.rs` がサービス層を通さず UPDATE する経路）。
+    #[tokio::test]
+    async fn issuing_an_invoice_records_the_source_rows_it_flips() {
+        let db = migrate_memory().await.unwrap();
+        let customers = CustomersService::new(db.clone());
+        let customer = customers
+            .create(customer_input("C001", "架空商事"))
+            .await
+            .expect("customer");
+        let projects = crate::projects::ProjectsService::new(db.clone());
+        let project = projects
+            .create(crate::projects::ProjectInput {
+                code: "P001".to_string(),
+                customer_id: customer.id,
+                name: "架空案件".to_string(),
+                status: "IN_PROGRESS".to_string(),
+                started_on: None,
+                due_on: None,
+                estimate_amount: None,
+                contract_amount: None,
+                billing_hourly_rate: Some(10_000),
+                scope: None,
+                note: None,
+            })
+            .await
+            .expect("project");
+        let work_logs = crate::work_logs::WorkLogsService::new(db.clone());
+        let work_log = work_logs
+            .create(crate::work_logs::WorkLogInput {
+                project_id: project.id,
+                trip_id: None,
+                worked_on: "2026-08-20".to_string(),
+                work_category_code: "DESIGN".to_string(),
+                minutes: 60,
+                applied_rate: Some(6_000),
+                description: None,
+                invoiced: false,
+            })
+            .await
+            .expect("work log");
+
+        let invoices = crate::invoices::InvoicesService::new(db.clone());
+        let draft = invoices
+            .create(crate::invoices::InvoiceInput {
+                customer_id: customer.id,
+                closing_on: None,
+                due_on: None,
+                corrected_invoice_id: None,
+                note: None,
+                lines: vec![crate::invoices::InvoiceLineInput {
+                    project_id: project.id,
+                    item_name: "設計".to_string(),
+                    quantity: 1,
+                    unit_price: 10_000,
+                    tax_category: "STANDARD_10".to_string(),
+                    source_type: Some("WORK_LOG".to_string()),
+                    source_id: Some(work_log.id),
+                    note: None,
+                }],
+            })
+            .await
+            .expect("draft");
+
+        let before_issue = outbox_head(&db).await.expect("head");
+        invoices.issue(draft.invoice.id).await.expect("issue");
+
+        let entries = outbox_since(&db, before_issue).await.expect("outbox");
+        let flipped = entries
+            .iter()
+            .find(|e| e.table_name == "work_logs" && e.row_key == work_log.id.to_string())
+            .unwrap_or_else(|| panic!("確定が立てた invoiced が記録されていない: {entries:?}"));
+        assert_eq!(flipped.op, "UPDATE");
+
+        // 取消も同じく記録される。
+        let before_cancel = outbox_head(&db).await.expect("head");
+        invoices.cancel(draft.invoice.id).await.expect("cancel");
+        let entries = outbox_since(&db, before_cancel).await.expect("outbox");
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.table_name == "work_logs" && e.op == "UPDATE"),
+            "取消が戻した invoiced が記録されていない: {entries:?}"
+        );
+    }
+
+    /// `after_seq` より後だけを返し、`seq` の昇順で並ぶこと（同期の watermark）。
+    #[tokio::test]
+    async fn outbox_since_returns_only_what_follows_the_watermark() {
+        let db = migrate_memory().await.unwrap();
+        let customers = CustomersService::new(db.clone());
+        customers
+            .create(customer_input("C001", "架空商事"))
+            .await
+            .expect("1件目");
+        let watermark = outbox_head(&db).await.expect("head");
+
+        customers
+            .create(customer_input("C002", "架空工業"))
+            .await
+            .expect("2件目");
+
+        let entries = outbox_since(&db, watermark).await.expect("outbox");
+        assert_eq!(
+            entries.len(),
+            1,
+            "watermark 以前が混ざっている: {entries:?}"
+        );
+        assert!(entries[0].seq > watermark);
+
+        // 空の DB では head が 0 で、そこから全件が取れる。
+        let fresh = migrate_memory().await.unwrap();
+        assert_eq!(outbox_head(&fresh).await.unwrap(), 0);
+        assert!(outbox_since(&fresh, 0).await.unwrap().is_empty());
+    }
+
+    /// コード PK の表は `row_key` にコードそのものが入る（10進文字列ではない）。
+    #[tokio::test]
+    async fn a_code_keyed_table_records_the_code_as_its_row_key() {
+        let db = migrate_memory().await.unwrap();
+        let before = outbox_head(&db).await.expect("head");
+
+        crate::masters::MastersService::new(db.clone())
+            .set_cost_rate(crate::masters::CostRateInput {
+                work_category_code: "DESIGN".to_string(),
+                hourly_rate: 6_500,
+            })
+            .await
+            .expect("set_cost_rate");
+
+        let entries = outbox_since(&db, before).await.expect("outbox");
+        let rate = entries
+            .iter()
+            .find(|e| e.table_name == "cost_rates")
+            .unwrap_or_else(|| panic!("レートの変更が記録されていない: {entries:?}"));
+        assert_eq!(rate.row_key, "DESIGN");
     }
 
     // --- 採番レンジ ---
