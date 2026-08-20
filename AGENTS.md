@@ -249,20 +249,20 @@ Draft → Issued → Partially Paid ⇄ Paid
 
 ## 7. Phase 進行
 
-現在の Phase：**Phase 1（要件・ドメイン設計）**
+現在の Phase：**Phase 2（基本マスター）着手可**
 
 | Phase | 内容                                   | 状態   |
 | ----- | -------------------------------------- | ------ |
 | 0     | リポジトリ作成・テンプレート派生       | 完了   |
-| 1     | 要件・ドメイン設計                     | 着手可 |
-| 2     | 基本マスター（Customer / Project）     | 未着手 |
+| 1     | 要件・ドメイン設計                     | 完了   |
+| 2     | 基本マスター（Customer / Project）     | 着手可 |
 | 3     | 工数・経費（WorkLog / Trip / Expense） | 未着手 |
 | 4     | 採算管理                               | 未着手 |
 | 5     | 請求（Invoice / PDF）                  | 未着手 |
 | 6     | 入金管理（Payment）                    | 未着手 |
 | 7     | 実運用評価                             | 未着手 |
 
-Phase 0 完了条件「空の Banto Business アプリが起動すること」は 2026-08-19 に Windows 実機（`pnpm --filter banto-business-app tauri dev`）で確認済み。CI は ubuntu / windows 双方でコンパイル・テストを検証している。
+Phase 0 完了条件「空の Banto Business アプリが起動すること」は 2026-08-19 に Windows 実機で確認済み。Phase 1 の成果物は `docs/domain/`（requirements / er-diagram / schema / state-machine / glossary / open-questions）にあり、未決事項はゼロ。`docs/tax-calculation.md` も確定済み。
 
 **Phase 1 が確定するまで Phase 2 以降のテーブルを先行実装しない。**
 
