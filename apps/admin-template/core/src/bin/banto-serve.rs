@@ -37,12 +37,16 @@ use admin_template_core::backup::BackupService;
 use admin_template_core::customers::CustomersService;
 use admin_template_core::db::{init_db_from_target, is_postgres_url};
 use admin_template_core::events::event_channel;
+use admin_template_core::expenses::ExpensesService;
 use admin_template_core::items::ItemsService;
+use admin_template_core::masters::MastersService;
 use admin_template_core::projects::ProjectsService;
 use admin_template_core::rest::{api_router, audited_credential_verifier, Services};
 use admin_template_core::settings::SettingsService;
 use admin_template_core::system_info::SystemInfoService;
+use admin_template_core::trips::TripsService;
 use admin_template_core::users::UsersService;
+use admin_template_core::work_logs::WorkLogsService;
 use banto_attachments::AttachmentsService;
 use banto_server::{
     lan_urls, start, static_router, with_security_headers, AuthState, ServerConfig,
@@ -109,6 +113,12 @@ async fn main() {
     // 変更を配信するためイベント送信器を付ける。
     let customers = CustomersService::new(db.clone()).with_events(events.clone());
     let projects = ProjectsService::new(db.clone()).with_events(events.clone());
+    // Phase 3（工数・経費）。Trip の一括生成は work_logs / expenses も
+    // 変更するため、TripsService 側が3リソース分のイベントを送る。
+    let masters = MastersService::new(db.clone()).with_events(events.clone());
+    let work_logs = WorkLogsService::new(db.clone()).with_events(events.clone());
+    let expenses = ExpensesService::new(db.clone()).with_events(events.clone());
+    let trips = TripsService::new(db.clone()).with_events(events.clone());
     let users = UsersService::new(db.clone());
     let settings = SettingsService::new(db.clone());
     let backup = BackupService::new(db_path_buf.clone(), db.clone());
@@ -178,6 +188,10 @@ async fn main() {
         items,
         customers,
         projects,
+        masters,
+        work_logs,
+        expenses,
+        trips,
         users,
         settings,
         audit,

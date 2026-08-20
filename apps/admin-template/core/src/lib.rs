@@ -6,11 +6,16 @@
 
 pub mod assets;
 pub mod customers;
+pub mod dates;
 pub mod db;
 pub mod events;
+pub mod expenses;
 pub mod items;
+pub mod masters;
 pub mod projects;
 pub mod rest;
+pub mod trips;
+pub mod work_logs;
 
 // Theme C (docs/template-scope.md §7): the domain-agnostic services moved to
 // the shared `banto-admin-services` crate to shrink the surface a template

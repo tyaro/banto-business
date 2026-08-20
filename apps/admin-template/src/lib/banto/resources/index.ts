@@ -7,8 +7,11 @@
  */
 import type { ResourceDefinition } from '@banto/admin-core';
 import { customersResource } from './customers';
+import { expensesResource } from './expenses';
 import { itemsResource } from './items';
 import { projectsResource } from './projects';
+import { tripsResource } from './trips';
+import { workLogsResource } from './work-logs';
 
 export const resources: ResourceDefinition[] = [
 	// Business ドメイン（Phase 2 基本マスター）。`items` は Banto テンプレート
@@ -16,5 +19,8 @@ export const resources: ResourceDefinition[] = [
 	// （docs/domain/open-questions.md の items デモの扱い）。
 	customersResource,
 	projectsResource,
+	workLogsResource,
+	tripsResource,
+	expensesResource,
 	itemsResource
 ];

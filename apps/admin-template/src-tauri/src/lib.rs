@@ -26,12 +26,18 @@ use admin_template_core::backup::{BackupInfo, BackupService, PendingRestoreInfo}
 use admin_template_core::customers::{Customer, CustomerInput, CustomersService};
 use admin_template_core::db::init_db;
 use admin_template_core::events::event_channel;
+use admin_template_core::expenses::{Expense, ExpenseInput, ExpensesService};
 use admin_template_core::items::{ImportResult, Item, ItemImportRow, ItemInput, ItemsService};
+use admin_template_core::masters::{
+    CostRateInput, CostRateValues, ExpenseCategory, MastersService, WorkCategory,
+};
 use admin_template_core::projects::{Project, ProjectInput, ProjectsService};
 use admin_template_core::rest::{api_router, audited_credential_verifier, Services};
 use admin_template_core::settings::{AuditSettings, AuthSettings, ServerSettings, SettingsService};
 use admin_template_core::system_info::SystemInfoService;
+use admin_template_core::trips::{Trip, TripGenerationResult, TripInput, TripsService};
 use admin_template_core::users::{Role, UserIdentity, UserSummary, UsersService};
+use admin_template_core::work_logs::{WorkLog, WorkLogInput, WorkLogsService};
 use banto_attachments::{AttachmentMeta, AttachmentsService, NewAttachment};
 use banto_core::{BantoError, FieldError, ListParams, ListResult};
 use banto_server::routes::SystemInfo;
@@ -56,6 +62,12 @@ struct AppState {
     /// 両方へ配信される。
     customers: CustomersService,
     projects: ProjectsService,
+    /// Phase 3（工数・経費）。Trip の一括生成は work_logs / expenses も
+    /// 書き換えるため、TripsService が3リソース分の変更イベントを送る。
+    masters: MastersService,
+    work_logs: WorkLogsService,
+    expenses: ExpensesService,
+    trips: TripsService,
     /// The webview window's own session identity, set by `auth_login`/
     /// `auth_setup` and cleared by `auth_logout` - all called directly via
     /// `invoke()`, never through `/api/auth/login`. `Some` means logged in;
@@ -278,6 +290,305 @@ fn ping() -> &'static str {
 // `rest/customers.rs` / `rest/projects.rs`）と同一の認可（editor 以上）と
 // 同一の監査（`create`/`update`/`delete` を `record_ok`）を通す。読み取りは
 // `Role::Viewer` で通し、両経路とも監査しない。
+
+// --- Business ドメイン: 工数・経費・出張（Phase 3） ---
+//
+// conventions §1: mutating は REST 経路（admin-template-core の
+// `rest/work_logs.rs` / `rest/expenses.rs` / `rest/trips.rs` /
+// `rest/masters.rs`）と同一の認可（editor 以上）・同一の監査を通す。
+// 読み取りは Viewer で通し、両経路とも監査しない。
+
+#[tauri::command]
+async fn work_categories_list(state: State<'_, AppState>) -> Result<Vec<WorkCategory>, BantoError> {
+    require_role(&state, Role::Viewer, "work-categories").await?;
+    state.masters.list_work_categories().await
+}
+
+#[tauri::command]
+async fn expense_categories_list(
+    state: State<'_, AppState>,
+    _params: ListParams,
+) -> Result<ListResult<ExpenseCategory>, BantoError> {
+    require_role(&state, Role::Viewer, "expense_categories").await?;
+    let rows = state.masters.list_expense_categories().await?;
+    let total_count = rows.len() as u64;
+    Ok(ListResult { rows, total_count })
+}
+
+/// 内部原価レートの設定。**採算計算はこのテーブルを参照しない**
+/// （CLAUDE.md 1.2）ため、変更しても過去の工数原価は動かない。
+/// レートの設定。DataProvider の `update(resource, id, values)` に合わせ、
+/// id（作業分類コード）と値を分けて受ける。
+#[tauri::command]
+async fn cost_rates_update(
+    state: State<'_, AppState>,
+    id: String,
+    values: CostRateValues,
+) -> Result<WorkCategory, BantoError> {
+    let actor = require_role(&state, Role::Editor, "cost_rates").await?;
+    let updated = state
+        .masters
+        .set_cost_rate(CostRateInput {
+            work_category_code: id,
+            hourly_rate: values.hourly_rate,
+        })
+        .await?;
+    record_ok(
+        &state.audit,
+        &actor,
+        "update",
+        "cost_rates",
+        Some(&updated.code),
+        Some(serde_json::json!({ "hourlyRate": updated.hourly_rate })),
+    )
+    .await;
+    Ok(updated)
+}
+
+#[tauri::command]
+async fn work_logs_list(
+    state: State<'_, AppState>,
+    params: ListParams,
+) -> Result<ListResult<WorkLog>, BantoError> {
+    require_role(&state, Role::Viewer, "work_logs").await?;
+    state.work_logs.list(params).await
+}
+
+#[tauri::command]
+async fn work_logs_get(state: State<'_, AppState>, id: i64) -> Result<WorkLog, BantoError> {
+    require_role(&state, Role::Viewer, "work_logs").await?;
+    state.work_logs.get(id).await
+}
+
+#[tauri::command]
+async fn work_logs_create(
+    state: State<'_, AppState>,
+    values: WorkLogInput,
+) -> Result<WorkLog, BantoError> {
+    let actor = require_role(&state, Role::Editor, "work_logs").await?;
+    let work_log = state.work_logs.create(values).await?;
+    record_ok(
+        &state.audit,
+        &actor,
+        "create",
+        "work_logs",
+        Some(&work_log.id.to_string()),
+        Some(serde_json::json!({
+            "projectId": work_log.project_id,
+            "workedOn": work_log.worked_on,
+        })),
+    )
+    .await;
+    Ok(work_log)
+}
+
+#[tauri::command]
+async fn work_logs_update(
+    state: State<'_, AppState>,
+    id: i64,
+    values: WorkLogInput,
+) -> Result<WorkLog, BantoError> {
+    let actor = require_role(&state, Role::Editor, "work_logs").await?;
+    let work_log = state.work_logs.update(id, values).await?;
+    record_ok(
+        &state.audit,
+        &actor,
+        "update",
+        "work_logs",
+        Some(&work_log.id.to_string()),
+        Some(serde_json::json!({
+            "projectId": work_log.project_id,
+            "workedOn": work_log.worked_on,
+        })),
+    )
+    .await;
+    Ok(work_log)
+}
+
+#[tauri::command]
+async fn work_logs_delete(state: State<'_, AppState>, id: i64) -> Result<(), BantoError> {
+    let actor = require_role(&state, Role::Editor, "work_logs").await?;
+    state.work_logs.delete(id).await?;
+    record_ok(
+        &state.audit,
+        &actor,
+        "delete",
+        "work_logs",
+        Some(&id.to_string()),
+        None,
+    )
+    .await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn expenses_list(
+    state: State<'_, AppState>,
+    params: ListParams,
+) -> Result<ListResult<Expense>, BantoError> {
+    require_role(&state, Role::Viewer, "expenses").await?;
+    state.expenses.list(params).await
+}
+
+#[tauri::command]
+async fn expenses_get(state: State<'_, AppState>, id: i64) -> Result<Expense, BantoError> {
+    require_role(&state, Role::Viewer, "expenses").await?;
+    state.expenses.get(id).await
+}
+
+#[tauri::command]
+async fn expenses_create(
+    state: State<'_, AppState>,
+    values: ExpenseInput,
+) -> Result<Expense, BantoError> {
+    let actor = require_role(&state, Role::Editor, "expenses").await?;
+    let expense = state.expenses.create(values).await?;
+    record_ok(
+        &state.audit,
+        &actor,
+        "create",
+        "expenses",
+        Some(&expense.id.to_string()),
+        Some(serde_json::json!({
+            "projectId": expense.project_id,
+            "spentOn": expense.spent_on,
+        })),
+    )
+    .await;
+    Ok(expense)
+}
+
+#[tauri::command]
+async fn expenses_update(
+    state: State<'_, AppState>,
+    id: i64,
+    values: ExpenseInput,
+) -> Result<Expense, BantoError> {
+    let actor = require_role(&state, Role::Editor, "expenses").await?;
+    let expense = state.expenses.update(id, values).await?;
+    record_ok(
+        &state.audit,
+        &actor,
+        "update",
+        "expenses",
+        Some(&expense.id.to_string()),
+        Some(serde_json::json!({
+            "projectId": expense.project_id,
+            "spentOn": expense.spent_on,
+        })),
+    )
+    .await;
+    Ok(expense)
+}
+
+#[tauri::command]
+async fn expenses_delete(state: State<'_, AppState>, id: i64) -> Result<(), BantoError> {
+    let actor = require_role(&state, Role::Editor, "expenses").await?;
+    state.expenses.delete(id).await?;
+    record_ok(
+        &state.audit,
+        &actor,
+        "delete",
+        "expenses",
+        Some(&id.to_string()),
+        None,
+    )
+    .await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn trips_list(
+    state: State<'_, AppState>,
+    params: ListParams,
+) -> Result<ListResult<Trip>, BantoError> {
+    require_role(&state, Role::Viewer, "trips").await?;
+    state.trips.list(params).await
+}
+
+#[tauri::command]
+async fn trips_get(state: State<'_, AppState>, id: i64) -> Result<Trip, BantoError> {
+    require_role(&state, Role::Viewer, "trips").await?;
+    state.trips.get(id).await
+}
+
+/// この出張に紐づく工数・経費の件数（削除前の確認表示用。要件 F-T3）。
+#[tauri::command]
+async fn trips_linked_counts(
+    state: State<'_, AppState>,
+    id: i64,
+) -> Result<serde_json::Value, BantoError> {
+    require_role(&state, Role::Viewer, "trips").await?;
+    let (work_logs, expenses) = state.trips.linked_record_counts(id).await?;
+    Ok(serde_json::json!({ "workLogs": work_logs, "expenses": expenses }))
+}
+
+/// 出張の登録。`generate` を伴うと工数・経費を一括生成する（要件 F-T1）。
+/// 監査の detail に生成件数を残すのは REST 経路と同じ（生成物は後から個別
+/// 編集できるので、作成時点の内訳が無いと差分を追えない）。
+#[tauri::command]
+async fn trips_create(
+    state: State<'_, AppState>,
+    values: TripInput,
+) -> Result<TripGenerationResult, BantoError> {
+    let actor = require_role(&state, Role::Editor, "trips").await?;
+    let result = state.trips.create(values).await?;
+    record_ok(
+        &state.audit,
+        &actor,
+        "create",
+        "trips",
+        Some(&result.trip.id.to_string()),
+        Some(serde_json::json!({
+            "destination": result.trip.destination,
+            "generatedWorkLogs": result.travel_work_logs + result.onsite_work_logs,
+            "generatedExpenses": result.expenses,
+        })),
+    )
+    .await;
+    Ok(result)
+}
+
+#[tauri::command]
+async fn trips_update(
+    state: State<'_, AppState>,
+    id: i64,
+    values: TripInput,
+) -> Result<Trip, BantoError> {
+    let actor = require_role(&state, Role::Editor, "trips").await?;
+    let trip = state.trips.update(id, values).await?;
+    record_ok(
+        &state.audit,
+        &actor,
+        "update",
+        "trips",
+        Some(&trip.id.to_string()),
+        Some(serde_json::json!({ "destination": trip.destination })),
+    )
+    .await;
+    Ok(trip)
+}
+
+/// 出張の削除。生成物は消さず trip_id を NULL 化する（要件 F-T3）。
+#[tauri::command]
+async fn trips_delete(state: State<'_, AppState>, id: i64) -> Result<(), BantoError> {
+    let actor = require_role(&state, Role::Editor, "trips").await?;
+    let (work_logs, expenses) = state.trips.linked_record_counts(id).await?;
+    state.trips.delete(id).await?;
+    record_ok(
+        &state.audit,
+        &actor,
+        "delete",
+        "trips",
+        Some(&id.to_string()),
+        Some(serde_json::json!({
+            "detachedWorkLogs": work_logs,
+            "detachedExpenses": expenses,
+        })),
+    )
+    .await;
+    Ok(())
+}
 
 #[tauri::command]
 async fn customers_list(
@@ -986,6 +1297,10 @@ async fn start_embedded_server(
     items: ItemsService,
     customers: CustomersService,
     projects: ProjectsService,
+    masters: MastersService,
+    work_logs: WorkLogsService,
+    expenses: ExpensesService,
+    trips: TripsService,
     users: UsersService,
     settings: SettingsService,
     audit: AuditLogService,
@@ -1007,6 +1322,10 @@ async fn start_embedded_server(
         items,
         customers,
         projects,
+        masters,
+        work_logs,
+        expenses,
+        trips,
         users,
         settings,
         audit,
@@ -1085,6 +1404,10 @@ async fn server_apply(
                 state.items.clone(),
                 state.customers.clone(),
                 state.projects.clone(),
+                state.masters.clone(),
+                state.work_logs.clone(),
+                state.expenses.clone(),
+                state.trips.clone(),
                 state.users.clone(),
                 state.settings.clone(),
                 state.audit.clone(),
@@ -2056,6 +2379,10 @@ pub fn run() {
             let items = ItemsService::new(db.clone()).with_events(events.clone());
             let customers = CustomersService::new(db.clone()).with_events(events.clone());
             let projects = ProjectsService::new(db.clone()).with_events(events.clone());
+            let masters = MastersService::new(db.clone()).with_events(events.clone());
+            let work_logs = WorkLogsService::new(db.clone()).with_events(events.clone());
+            let expenses = ExpensesService::new(db.clone()).with_events(events.clone());
+            let trips = TripsService::new(db.clone()).with_events(events.clone());
             let users = UsersService::new(db.clone());
             let settings = SettingsService::new(db.clone());
             let backup = BackupService::new(db_path.clone(), db.clone());
@@ -2268,6 +2595,10 @@ pub fn run() {
                     items.clone(),
                     customers.clone(),
                     projects.clone(),
+                    masters.clone(),
+                    work_logs.clone(),
+                    expenses.clone(),
+                    trips.clone(),
                     users.clone(),
                     settings.clone(),
                     audit.clone(),
@@ -2331,6 +2662,10 @@ pub fn run() {
                 items,
                 customers,
                 projects,
+                masters,
+                work_logs,
+                expenses,
+                trips,
                 auth: Mutex::new(initial_auth),
                 users,
                 settings,
@@ -2367,6 +2702,25 @@ pub fn run() {
             projects_create,
             projects_update,
             projects_delete,
+            work_categories_list,
+            expense_categories_list,
+            cost_rates_update,
+            work_logs_list,
+            work_logs_get,
+            work_logs_create,
+            work_logs_update,
+            work_logs_delete,
+            expenses_list,
+            expenses_get,
+            expenses_create,
+            expenses_update,
+            expenses_delete,
+            trips_list,
+            trips_get,
+            trips_linked_counts,
+            trips_create,
+            trips_update,
+            trips_delete,
             auth_status,
             auth_setup,
             auth_login,
@@ -2430,6 +2784,10 @@ mod tests {
             items: ItemsService::new(pool.clone()).with_events(events.clone()),
             customers: CustomersService::new(pool.clone()).with_events(events.clone()),
             projects: ProjectsService::new(pool.clone()).with_events(events.clone()),
+            masters: MastersService::new(pool.clone()).with_events(events.clone()),
+            work_logs: WorkLogsService::new(pool.clone()).with_events(events.clone()),
+            expenses: ExpensesService::new(pool.clone()).with_events(events.clone()),
+            trips: TripsService::new(pool.clone()).with_events(events.clone()),
             auth: Mutex::new(None),
             users: UsersService::new(pool.clone()),
             settings: SettingsService::new(pool.clone()),
@@ -2472,6 +2830,10 @@ mod tests {
             items: ItemsService::new(pool.clone()).with_events(events.clone()),
             customers: CustomersService::new(pool.clone()).with_events(events.clone()),
             projects: ProjectsService::new(pool.clone()).with_events(events.clone()),
+            masters: MastersService::new(pool.clone()).with_events(events.clone()),
+            work_logs: WorkLogsService::new(pool.clone()).with_events(events.clone()),
+            expenses: ExpensesService::new(pool.clone()).with_events(events.clone()),
+            trips: TripsService::new(pool.clone()).with_events(events.clone()),
             auth: Mutex::new(None),
             users: UsersService::new(pool.clone()),
             settings: SettingsService::new(pool.clone()),

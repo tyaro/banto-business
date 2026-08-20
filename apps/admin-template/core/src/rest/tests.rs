@@ -1,7 +1,11 @@
 use super::*;
 use crate::customers::CustomersService;
 use crate::db::migrate_memory;
+use crate::expenses::ExpensesService;
+use crate::masters::MastersService;
 use crate::projects::ProjectsService;
+use crate::trips::TripsService;
+use crate::work_logs::WorkLogsService;
 use axum::body::Body;
 use axum::http::Request as HttpRequest;
 use banto_core::{BantoError, FilterOp, FilterState, Pagination, SortDirection, SortState};
@@ -69,6 +73,10 @@ async fn router_with_role_tokens() -> (Router, String, String, String) {
     let pool = migrate_memory().await.expect("migrate_memory");
     let customers = CustomersService::new(pool.clone());
     let projects = ProjectsService::new(pool.clone());
+    let masters = MastersService::new(pool.clone());
+    let work_logs = WorkLogsService::new(pool.clone());
+    let expenses = ExpensesService::new(pool.clone());
+    let trips = TripsService::new(pool.clone());
     let (tx, _rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
     let users = UsersService::new(pool.clone());
@@ -122,6 +130,10 @@ async fn router_with_role_tokens() -> (Router, String, String, String) {
         items,
         customers,
         projects,
+        masters,
+        work_logs,
+        expenses,
+        trips,
         users,
         settings,
         audit,
@@ -141,6 +153,10 @@ async fn router_with_token() -> (Router, String) {
     let pool = migrate_memory().await.expect("migrate_memory");
     let customers = CustomersService::new(pool.clone());
     let projects = ProjectsService::new(pool.clone());
+    let masters = MastersService::new(pool.clone());
+    let work_logs = WorkLogsService::new(pool.clone());
+    let expenses = ExpensesService::new(pool.clone());
+    let trips = TripsService::new(pool.clone());
     let (tx, _rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
     let users = UsersService::new(pool.clone());
@@ -158,6 +174,10 @@ async fn router_with_token() -> (Router, String) {
         items,
         customers,
         projects,
+        masters,
+        work_logs,
+        expenses,
+        trips,
         users,
         settings,
         audit,
@@ -362,6 +382,10 @@ async fn update_via_rest_is_observable_on_the_event_channel() {
     let pool = migrate_memory().await.expect("migrate_memory");
     let customers = CustomersService::new(pool.clone());
     let projects = ProjectsService::new(pool.clone());
+    let masters = MastersService::new(pool.clone());
+    let work_logs = WorkLogsService::new(pool.clone());
+    let expenses = ExpensesService::new(pool.clone());
+    let trips = TripsService::new(pool.clone());
     let (tx, mut rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
     let users = UsersService::new(pool.clone());
@@ -376,6 +400,10 @@ async fn update_via_rest_is_observable_on_the_event_channel() {
         items,
         customers,
         projects,
+        masters,
+        work_logs,
+        expenses,
+        trips,
         users,
         settings,
         audit,
@@ -440,6 +468,10 @@ async fn router_with_setup(allow_setup: bool) -> Router {
     let pool = migrate_memory().await.expect("migrate_memory");
     let customers = CustomersService::new(pool.clone());
     let projects = ProjectsService::new(pool.clone());
+    let masters = MastersService::new(pool.clone());
+    let work_logs = WorkLogsService::new(pool.clone());
+    let expenses = ExpensesService::new(pool.clone());
+    let trips = TripsService::new(pool.clone());
     let (tx, _rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
     let users = UsersService::new(pool.clone());
@@ -453,6 +485,10 @@ async fn router_with_setup(allow_setup: bool) -> Router {
         items,
         customers,
         projects,
+        masters,
+        work_logs,
+        expenses,
+        trips,
         users,
         settings,
         audit,
@@ -649,6 +685,10 @@ async fn router_with_real_login(allow_setup: bool) -> (Router, AuditLogService) 
     let pool = migrate_memory().await.expect("migrate_memory");
     let customers = CustomersService::new(pool.clone());
     let projects = ProjectsService::new(pool.clone());
+    let masters = MastersService::new(pool.clone());
+    let work_logs = WorkLogsService::new(pool.clone());
+    let expenses = ExpensesService::new(pool.clone());
+    let trips = TripsService::new(pool.clone());
     let (tx, _rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
     let users = UsersService::new(pool.clone());
@@ -662,6 +702,10 @@ async fn router_with_real_login(allow_setup: bool) -> (Router, AuditLogService) 
         items,
         customers,
         projects,
+        masters,
+        work_logs,
+        expenses,
+        trips,
         users,
         settings,
         audit: audit.clone(),
@@ -726,6 +770,17 @@ fn put_json(path: &str, token: &str, body: serde_json::Value) -> HttpRequest<Bod
 
 fn post_json_auth(path: &str, token: &str, body: serde_json::Value) -> HttpRequest<Body> {
     HttpRequest::post(path)
+        .header(CLIENT_HEADER.0, CLIENT_HEADER.1)
+        .header("Authorization", format!("Bearer {token}"))
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+/// PUT + JSON + 認証。`post_json_auth` の PUT 版（cost-rates の upsert や
+/// 各リソースの更新で使う）。
+fn put_json_auth(path: &str, token: &str, body: serde_json::Value) -> HttpRequest<Body> {
+    HttpRequest::put(path)
         .header(CLIENT_HEADER.0, CLIENT_HEADER.1)
         .header("Authorization", format!("Bearer {token}"))
         .header("content-type", "application/json")
@@ -1099,6 +1154,10 @@ async fn router_with_role_tokens_and_audit() -> (Router, AuditLogService, String
     let pool = migrate_memory().await.expect("migrate_memory");
     let customers = CustomersService::new(pool.clone());
     let projects = ProjectsService::new(pool.clone());
+    let masters = MastersService::new(pool.clone());
+    let work_logs = WorkLogsService::new(pool.clone());
+    let expenses = ExpensesService::new(pool.clone());
+    let trips = TripsService::new(pool.clone());
     let (tx, _rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
     let users = UsersService::new(pool.clone());
@@ -1139,6 +1198,10 @@ async fn router_with_role_tokens_and_audit() -> (Router, AuditLogService, String
         items,
         customers,
         projects,
+        masters,
+        work_logs,
+        expenses,
+        trips,
         users,
         settings,
         audit: audit.clone(),
@@ -1182,6 +1245,10 @@ async fn router_with_role_tokens_and_backup() -> (Router, tempfile::TempDir, Str
     let db = banto_storage::Db::Sqlite(pool);
     let customers = CustomersService::new(db.clone());
     let projects = ProjectsService::new(db.clone());
+    let masters = MastersService::new(db.clone());
+    let work_logs = WorkLogsService::new(db.clone());
+    let expenses = ExpensesService::new(db.clone());
+    let trips = TripsService::new(db.clone());
 
     let (tx, _rx) = broadcast::channel(16);
     let items = ItemsService::new(db.clone()).with_events(tx.clone());
@@ -1223,6 +1290,10 @@ async fn router_with_role_tokens_and_backup() -> (Router, tempfile::TempDir, Str
         items,
         customers,
         projects,
+        masters,
+        work_logs,
+        expenses,
+        trips,
         users,
         settings,
         audit,
@@ -2414,6 +2485,10 @@ async fn attachment_upload_and_delete_are_observable_on_the_event_channel() {
     let pool = migrate_memory().await.expect("migrate_memory");
     let customers = CustomersService::new(pool.clone());
     let projects = ProjectsService::new(pool.clone());
+    let masters = MastersService::new(pool.clone());
+    let work_logs = WorkLogsService::new(pool.clone());
+    let expenses = ExpensesService::new(pool.clone());
+    let trips = TripsService::new(pool.clone());
     let (tx, mut rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
     let users = UsersService::new(pool.clone());
@@ -2429,6 +2504,10 @@ async fn attachment_upload_and_delete_are_observable_on_the_event_channel() {
         items,
         customers,
         projects,
+        masters,
+        work_logs,
+        expenses,
+        trips,
         users,
         settings,
         audit,
@@ -2622,4 +2701,211 @@ async fn deleting_a_customer_with_projects_is_a_validation_error() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(body_json(response).await["kind"], "validation");
+}
+
+// --- Business ドメイン（Phase 3 工数・経費）の両経路対称テスト ---
+
+/// 顧客 → 案件 → レート設定まで済ませ、案件 id を返す。
+async fn seed_project(router: &Router, editor: &str) -> i64 {
+    let customer = body_json(
+        router
+            .clone()
+            .oneshot(post_json_auth(
+                "/api/customers",
+                editor,
+                customer_payload("C001"),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let project = body_json(
+        router
+            .clone()
+            .oneshot(post_json_auth(
+                "/api/projects",
+                editor,
+                json!({ "customerId": customer["id"], "name": "架空案件", "status": "IN_PROGRESS" }),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    // レートは分類コードを id として PUT する（DataProvider の
+    // `update(resource, id, values)` に対応。docs/recipes/add-resource.md）。
+    for (code, rate) in [("DESIGN", 6000), ("TRAVEL", 3000), ("ONSITE", 6000)] {
+        let response = router
+            .clone()
+            .oneshot(put_json_auth(
+                &format!("/api/cost_rates/{code}"),
+                editor,
+                json!({ "hourlyRate": rate }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "rate {code}");
+    }
+    project["id"].as_i64().expect("project id")
+}
+
+#[tokio::test]
+async fn viewer_can_read_masters_but_cannot_set_rates() {
+    let (router, _admin, _editor, viewer) = router_with_role_tokens().await;
+
+    for path in ["/api/work_categories/list", "/api/expense_categories/list"] {
+        let response = router
+            .clone()
+            .oneshot(post_json_auth(path, &viewer, json!(ListParams::default())))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{path}");
+    }
+
+    let denied = router
+        .oneshot(put_json_auth(
+            "/api/cost_rates/DESIGN",
+            &viewer,
+            json!({ "hourlyRate": 1000 }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+}
+
+/// 工数の作成が REST 経路でもレートをスナップショットし、原価を保存する
+/// （サービス層と同じ挙動が REST 経由でも成り立つことの確認）。
+#[tokio::test]
+async fn editor_creates_a_work_log_with_snapshotted_rate() {
+    let (router, _admin, editor, _viewer) = router_with_role_tokens().await;
+    let project_id = seed_project(&router, &editor).await;
+
+    let created = body_json(
+        router
+            .clone()
+            .oneshot(post_json_auth(
+                "/api/work_logs",
+                &editor,
+                json!({
+                    "projectId": project_id,
+                    "workedOn": "2026-08-20",
+                    "workCategoryCode": "DESIGN",
+                    "minutes": 90
+                }),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(created["appliedRate"], 6000);
+    assert_eq!(created["internalCost"], 9000);
+
+    let denied = router
+        .oneshot(post_json_auth(
+            "/api/work_logs",
+            "not-a-token",
+            json!({ "projectId": project_id }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// 出張の一括生成が REST 経由で動き、監査に生成件数が残る（要件 F-T1）。
+#[tokio::test]
+async fn trip_generation_creates_rows_and_records_the_counts() {
+    let (router, admin, editor, _viewer) = router_with_role_tokens().await;
+    let project_id = seed_project(&router, &editor).await;
+
+    let result = body_json(
+        router
+            .clone()
+            .oneshot(post_json_auth(
+                "/api/trips",
+                &editor,
+                json!({
+                    "projectId": project_id,
+                    "destination": "架空工業 本社工場",
+                    "startOn": "2026-09-01",
+                    "endOn": "2026-09-03",
+                    "onsiteDays": 3,
+                    "nights": 2,
+                    "generate": {
+                        "travelMinutesOneWay": 180,
+                        "onsiteMinutesPerDay": 480,
+                        "transportAmount": 24000,
+                        "lodgingAmountPerNight": 9500
+                    }
+                }),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(result["travelWorkLogs"], 2);
+    assert_eq!(result["onsiteWorkLogs"], 3);
+    assert_eq!(result["expenses"], 2);
+
+    let logs = body_json(
+        router
+            .clone()
+            .oneshot(post_json_auth(
+                "/api/work_logs/list",
+                &editor,
+                json!(ListParams::default()),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(logs["totalCount"], 5);
+
+    let audit = body_json(
+        router
+            .oneshot(post_json_auth(
+                "/api/audit-log/list",
+                &admin,
+                json!(ListParams::default()),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let entry = audit["rows"]
+        .as_array()
+        .expect("rows")
+        .iter()
+        .find(|r| r["action"] == "create" && r["resource"] == "trips")
+        .expect("trips create audit entry")
+        .clone();
+    let detail: serde_json::Value =
+        serde_json::from_str(entry["detail"].as_str().expect("detail")).expect("detail json");
+    assert_eq!(detail["generatedWorkLogs"], 5);
+    assert_eq!(detail["generatedExpenses"], 2);
+}
+
+#[tokio::test]
+async fn viewer_cannot_write_work_logs_expenses_or_trips() {
+    let (router, _admin, _editor, viewer) = router_with_role_tokens().await;
+
+    for (path, payload) in [
+        (
+            "/api/work_logs",
+            json!({ "projectId": 1, "workedOn": "2026-08-20", "workCategoryCode": "DESIGN", "minutes": 60 }),
+        ),
+        (
+            "/api/expenses",
+            json!({ "projectId": 1, "spentOn": "2026-08-20", "expenseCategoryCode": "TRANSPORT", "amount": 1000 }),
+        ),
+        (
+            "/api/trips",
+            json!({ "projectId": 1, "destination": "架空工業", "startOn": "2026-09-01", "endOn": "2026-09-02", "onsiteDays": 1, "nights": 1 }),
+        ),
+    ] {
+        let response = router
+            .clone()
+            .oneshot(post_json_auth(path, &viewer, payload))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{path}");
+    }
 }
