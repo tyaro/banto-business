@@ -249,20 +249,22 @@ Draft → Issued → Partially Paid ⇄ Paid
 
 ## 7. Phase 進行
 
-現在の Phase：**Phase 2（基本マスター）着手可**
+現在の Phase：**Phase 3（工数・経費）着手可**
 
 | Phase | 内容                                   | 状態   |
 | ----- | -------------------------------------- | ------ |
 | 0     | リポジトリ作成・テンプレート派生       | 完了   |
 | 1     | 要件・ドメイン設計                     | 完了   |
-| 2     | 基本マスター（Customer / Project）     | 着手可 |
-| 3     | 工数・経費（WorkLog / Trip / Expense） | 未着手 |
+| 2     | 基本マスター（Customer / Project）     | 完了   |
+| 3     | 工数・経費（WorkLog / Trip / Expense） | 着手可 |
 | 4     | 採算管理                               | 未着手 |
 | 5     | 請求（Invoice / PDF）                  | 未着手 |
 | 6     | 入金管理（Payment）                    | 未着手 |
 | 7     | 実運用評価                             | 未着手 |
 
-Phase 0 完了条件「空の Banto Business アプリが起動すること」は 2026-08-19 に Windows 実機で確認済み。Phase 1 の成果物は `docs/domain/`（requirements / er-diagram / schema / state-machine / glossary / open-questions）にあり、未決事項はゼロ。`docs/tax-calculation.md` も確定済み。
+Phase 1 の成果物は `docs/domain/`（requirements / er-diagram / schema / state-machine / glossary / open-questions）にあり、未決事項はゼロ。`docs/tax-calculation.md` も確定済み。
+
+Phase 2 で `docs/recipes/add-resource.md` の標準手順が Banto Business でも成立することを確認した（顧客・案件の CRUD が両経路 + 画面まで通った）。摩擦は `docs/banto-feedback.md` に4件記録済み。**`items` デモの削除は Phase 2 完了後の作業として残っている**（Phase 3 の着手前でも後でもよいが、Phase 3 のリソース追加でもう一度手本として使う可能性がある）。
 
 **Phase 1 が確定するまで Phase 2 以降のテーブルを先行実装しない。**
 
