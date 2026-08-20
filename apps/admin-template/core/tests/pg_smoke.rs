@@ -18,6 +18,7 @@
 
 use admin_template_core::audit::{AuditEntry, AuditLogService};
 use admin_template_core::backup::BackupService;
+use admin_template_core::calendar::CalendarService;
 use admin_template_core::customers::{CustomerInput, CustomersService, DAY_END_OF_MONTH};
 use admin_template_core::db::init_db_from_target;
 use admin_template_core::expenses::{ExpenseInput, ExpensesService};
@@ -25,7 +26,6 @@ use admin_template_core::invoices::{InvoiceInput, InvoiceLineInput, InvoicesServ
 use admin_template_core::issuer::{IssuerInput, IssuerService};
 use admin_template_core::masters::{CostRateInput, MastersService};
 use admin_template_core::payments::{PaymentAllocationInput, PaymentInput, PaymentsService};
-use admin_template_core::calendar::CalendarService;
 use admin_template_core::profitability::ProfitabilityService;
 use admin_template_core::projects::{ProjectInput, ProjectsService};
 use admin_template_core::settings::SettingsService;
