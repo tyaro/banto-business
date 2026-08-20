@@ -417,11 +417,36 @@ impl WorkLogsService {
         Ok(row)
     }
 
+    /// 請求済み（`invoiced = 1`）の行は編集・削除を拒否する（決定 C-20）。
+    ///
+    /// 確定した Invoice は確定時点の値をスナップショットしているので、元の行を
+    /// 直しても**請求額は動かない**（`CLAUDE.md` 1.2）。しかし
+    /// `profitability.rs` は元の行を直接集計するため、直すと**採算だけが静かに
+    /// ずれる**。請求済みの行を直す正しい手順は、請求書を取消（赤伝）して
+    /// `invoiced` を戻し、直してから新規に発行し直すこと（要件 F-I8 /
+    /// `docs/domain/state-machine.md`）。
+    ///
+    /// 確定・取消そのものは `invoices.rs` が自前の SQL で `invoiced` を
+    /// 書き換えるので、このガードには掛からない。
+    async fn ensure_not_invoiced(&self, id: i64) -> Result<(), BantoError> {
+        if self.get(id).await?.invoiced != 0 {
+            return Err(BantoError::Validation {
+                field_errors: vec![FieldError {
+                    field: "invoiced".to_string(),
+                    message: "請求済みのため変更できません。請求書を取消してから編集してください"
+                        .to_string(),
+                }],
+            });
+        }
+        Ok(())
+    }
+
     /// 更新。**適用単価と内部原価は再計算する**（分や単価を直したら原価も
     /// 追随しないと行内で辻褄が合わなくなる）。ただし単価の既定値は更新時も
     /// 「その時点のレートマスタ」ではなく**入力値**を優先するため、
     /// `appliedRate` を省略した更新は元の行の単価を引き継ぐ。
     pub async fn update(&self, id: i64, input: WorkLogInput) -> Result<WorkLog, BantoError> {
+        self.ensure_not_invoiced(id).await?;
         let mut input = input;
         if input.applied_rate.is_none() {
             // 既存行の単価を引き継ぐ（マスタが変わっても過去の行は動かない、
@@ -467,6 +492,7 @@ impl WorkLogsService {
     }
 
     pub async fn delete(&self, id: i64) -> Result<(), BantoError> {
+        self.ensure_not_invoiced(id).await?;
         let dialect = self.db.dialect();
         let sql = format!(
             "DELETE FROM work_logs WHERE id = {}",
@@ -629,6 +655,51 @@ mod tests {
             per_row, rounded_sum,
             "行ごと丸めと合計後丸めは 2 円ずれる（この差が出ることが本ケースの目的）"
         );
+    }
+
+    /// **決定 C-20。** 請求済みの行は編集も削除もできない。
+    ///
+    /// 請求額は確定時スナップショットなので動かないが（`CLAUDE.md` 1.2）、
+    /// 採算は元の行を直接集計するので静かにずれる。直したいときは請求書を
+    /// 取消（赤伝）してから直し、新規に発行し直す（F-I8）。
+    #[tokio::test]
+    async fn an_invoiced_work_log_can_be_neither_updated_nor_deleted() {
+        let (svc, _masters, project_id) = fixture().await;
+        let created = svc.create(input(project_id, 60)).await.expect("create");
+
+        // 請求済みにする（本来は invoices.rs の確定が立てるフラグ）。
+        let mut invoiced = input(project_id, 60);
+        invoiced.invoiced = true;
+        svc.update(created.id, invoiced)
+            .await
+            .expect("未請求のうちは更新できる");
+
+        let err = svc
+            .update(created.id, input(project_id, 999))
+            .await
+            .expect_err("請求済みの行は更新できない");
+        assert_eq!(
+            field_errors(&err)
+                .into_iter()
+                .map(|(f, _)| f)
+                .collect::<Vec<_>>(),
+            vec!["invoiced"]
+        );
+
+        let err = svc
+            .delete(created.id)
+            .await
+            .expect_err("請求済みの行は削除できない");
+        assert_eq!(
+            field_errors(&err)
+                .into_iter()
+                .map(|(f, _)| f)
+                .collect::<Vec<_>>(),
+            vec!["invoiced"]
+        );
+
+        // 分数が書き換わっていないこと（拒否した後も元のまま）。
+        assert_eq!(svc.get(created.id).await.expect("get").minutes, 60);
     }
 
     #[tokio::test]

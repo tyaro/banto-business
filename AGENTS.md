@@ -264,7 +264,7 @@ apt-get update -qq && apt-get install -y \
 
 ## 7. Phase 進行
 
-現在の Phase：**Phase 7（実運用評価）着手可**
+現在の Phase：**Phase 8（デバイス間同期）着手中**（Phase 7 の実運用評価と並行）
 
 | Phase | 内容                                   | 状態   |
 | ----- | -------------------------------------- | ------ |
@@ -276,6 +276,7 @@ apt-get update -qq && apt-get install -y \
 | 5     | 請求（Invoice / PDF）                  | 完了   |
 | 6     | 入金管理（Payment）                    | 完了   |
 | 7     | 実運用評価                             | 着手可 |
+| 8     | デバイス間同期（PC ⇄ Android）         | 着手中 |
 
 Phase 1 の成果物は `docs/domain/`（requirements / er-diagram / schema / state-machine / glossary / open-questions）にあり、未決事項はゼロ。`docs/tax-calculation.md` も確定済み。
 
@@ -293,6 +294,14 @@ Phase 6 着手時にも1件（C-19：差額が請求書を消し込むか）が�
 期限超過は**すべて導出値**で列に持たない（`CLAUDE.md` 1.5）。**請求時間単価は案件マスタ
 （`projects.billing_hourly_rate`）から取る。内部原価の `cost_rates` を請求に
 流用しない**（原価と売上が同じ数字になり粗利が常にゼロになる）。
+
+Phase 8 着手時にも1件（C-20：請求済み行を編集できるか）が判明した。**これは未決**
+（`docs/domain/open-questions.md`）。同期の衝突規則がこれに依存するので、実装前に
+決める必要がある。
+
+Phase 8 の同期方式は `docs/domain/sync.md` に確定させた。要点は、双方向は8テーブル
+のみ・**請求と入金は PC 専用**（オフライン2台だと請求書番号が重複しうるため）・
+id はデバイス別レンジ・変更追跡は outbox・削除は論理削除・衝突は自動解決しない。
 
 案件売上は `ProfitabilityService::revenue_for` が**確定済み（ISSUED）の
 InvoiceLine 合計**として集計する（Draft と取消済みは立たない）。
