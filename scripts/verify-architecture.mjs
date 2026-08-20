@@ -317,7 +317,11 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 		{ tauri: 'invoices_delete', rest: 'DELETE /api/invoices/{id}', role: 'Editor' },
 		{ tauri: 'invoices_issue', rest: 'POST /api/invoices/{id}/issue', role: 'Editor' },
 		{ tauri: 'invoices_cancel', rest: 'POST /api/invoices/{id}/cancel', role: 'Editor' },
-		{ tauri: 'issuer_update', rest: 'PUT /api/issuer', role: 'Admin' }
+		{ tauri: 'issuer_update', rest: 'PUT /api/issuer', role: 'Admin' },
+		// Business ドメイン（Phase 6 入金管理）。消込は請求書の残額を動かすので監査する。
+		{ tauri: 'payments_create', rest: 'POST /api/payments', role: 'Editor' },
+		{ tauri: 'payments_update', rest: 'PUT /api/payments/{id}', role: 'Editor' },
+		{ tauri: 'payments_delete', rest: 'DELETE /api/payments/{id}', role: 'Editor' }
 	];
 
 	// ロール床を照合したい読み取り系の対（CR-6）。読み取りは rule 8 の存在対称の
@@ -369,6 +373,10 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 		'issuer_get',
 		'items_get',
 		'items_list',
+		'outstanding_list',
+		'payments_get',
+		'payments_list',
+		'settlements_get',
 		'profitability_get',
 		'projects_get',
 		'projects_list',
@@ -399,6 +407,8 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 		'GET /api/issuer',
 		'GET /api/items/{id}',
 		'GET /api/profitability/{id}',
+		'GET /api/payments/{id}',
+		'GET /api/settlements/{id}',
 		'GET /api/projects/{id}',
 		'GET /api/trips/{id}',
 		'GET /api/trips/{id}/linked-counts',
@@ -417,6 +427,8 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 		'POST /api/invoices/list',
 		'POST /api/invoices/candidates',
 		'POST /api/items/list',
+		'POST /api/outstanding/list',
+		'POST /api/payments/list',
 		'POST /api/projects/list',
 		'POST /api/trips/list',
 		'POST /api/work_logs/list',

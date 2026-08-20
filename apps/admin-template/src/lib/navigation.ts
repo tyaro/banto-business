@@ -18,6 +18,7 @@ export type NavIconKey =
 	| 'expenses'
 	| 'cost-rates'
 	| 'invoices'
+	| 'payments'
 	| 'issuer'
 	| 'items'
 	| 'tree'
@@ -37,6 +38,7 @@ export type NavLabelKey =
 	| 'nav.expenses'
 	| 'nav.costRates'
 	| 'nav.invoices'
+	| 'nav.payments'
 	| 'nav.issuer'
 	| 'nav.items'
 	| 'nav.tree'
@@ -64,6 +66,8 @@ export const navItems: NavItem[] = [
 	{ path: '/expenses', labelKey: 'nav.expenses', icon: 'expenses' },
 	// Phase 5（請求）。請求書は工数・経費の下流なので、入力系の後に置く。
 	{ path: '/invoices', labelKey: 'nav.invoices', icon: 'invoices' },
+	// Phase 6（入金管理）。請求の下流なので請求の直後に置く。
+	{ path: '/payments', labelKey: 'nav.payments', icon: 'payments' },
 	{ path: '/cost-rates', labelKey: 'nav.costRates', icon: 'cost-rates' },
 	// 事業者情報（適格請求書の発行者）は設定の一種で admin 限定。
 	{ path: '/issuer', labelKey: 'nav.issuer', icon: 'issuer', adminOnly: true },

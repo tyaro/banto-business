@@ -14,6 +14,7 @@ pub mod invoices;
 pub mod issuer;
 pub mod items;
 pub mod masters;
+pub mod payments;
 pub mod profitability;
 pub mod projects;
 pub mod rest;

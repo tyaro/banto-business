@@ -62,6 +62,13 @@
 //! | POST   | `/api/invoices/{id}/cancel` | -       | `InvoiceDetail` (editor+, 赤伝) |
 //! | GET    | `/api/issuer`        | -              | `IssuerSettings` (admin)    |
 //! | PUT    | `/api/issuer`        | `IssuerInput`  | `IssuerSettings` (admin)    |
+//! | POST   | `/api/payments/list` | `ListParams`   | `ListResult<Payment>` (any role) |
+//! | GET    | `/api/payments/{id}` | -              | `PaymentDetail` (any role)  |
+//! | POST   | `/api/payments`      | `PaymentInput` | `PaymentDetail` (editor+)   |
+//! | PUT    | `/api/payments/{id}` | `PaymentInput` | `PaymentDetail` (editor+)   |
+//! | DELETE | `/api/payments/{id}` | -              | 204 (editor+)               |
+//! | GET    | `/api/settlements/{id}` | -           | `InvoiceSettlement` (any role, id は請求書 id・導出値) |
+//! | POST   | `/api/outstanding/list` | `ListParams` | `ListResult<InvoiceSettlement>` (any role, 未入金一覧) |
 //! | GET    | `/api/users`         | -              | `UserSummary[]` (admin) |
 //! | POST   | `/api/users`         | `{username,password,displayName,role}` | `UserIdentityResponse` (admin) |
 //! | PUT    | `/api/users/{id}`    | `{displayName,role}` | `UserSummary` (admin) |
@@ -247,6 +254,7 @@ use crate::items::{ImportResult, Item, ItemImportRow, ItemInput, ItemsService};
 use crate::masters::{
     CostRateInput, CostRateValues, ExpenseCategory, MastersService, WorkCategory,
 };
+use crate::payments::{InvoiceSettlement, Payment, PaymentDetail, PaymentInput, PaymentsService};
 use crate::profitability::{ProfitabilityService, ProjectProfitability};
 use crate::projects::{Project, ProjectInput, ProjectsService};
 use crate::settings::SettingsService;
@@ -262,6 +270,7 @@ mod invoices;
 mod issuer;
 mod items;
 mod masters;
+mod payments;
 mod profitability;
 mod projects;
 #[cfg(test)]
@@ -283,6 +292,7 @@ use invoices::invoices_router;
 use issuer::issuer_router;
 use items::items_router;
 use masters::masters_router;
+use payments::payments_router;
 use profitability::profitability_router;
 use projects::projects_router;
 use trips::trips_router;
@@ -325,6 +335,8 @@ pub struct Services {
     /// Business ドメイン（Phase 5 請求）。
     pub invoices: InvoicesService,
     pub issuer: IssuerService,
+    /// Business ドメイン（Phase 6 入金管理）。
+    pub payments: PaymentsService,
     pub users: UsersService,
     pub settings: SettingsService,
     pub audit: AuditLogService,
@@ -362,6 +374,7 @@ pub fn api_router(
         profitability,
         invoices,
         issuer,
+        payments,
         users,
         settings,
         audit,
@@ -402,6 +415,7 @@ pub fn api_router(
         .merge(profitability_router(profitability, auth.clone()))
         .merge(invoices_router(invoices, audit.clone(), auth.clone()))
         .merge(issuer_router(issuer, audit.clone(), auth.clone()))
+        .merge(payments_router(payments, audit.clone(), auth.clone()))
         .merge(users_router(users, audit.clone(), auth.clone()))
         .merge(audit_log_router(
             audit.clone(),

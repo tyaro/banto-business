@@ -50,6 +50,7 @@
 	import { listenPanelClosed, openPanelWindow } from '$lib/banto/popout';
 	import DashboardPanel from '$lib/components/DashboardPanel.svelte';
 	import PageHeader from '$lib/components/ui/PageHeader.svelte';
+	import OutstandingPanel from '$lib/components/business/OutstandingPanel.svelte';
 	import LoadingState from '$lib/components/ui/LoadingState.svelte';
 
 	const STOCK_TARGET = 3_000_000;
@@ -322,6 +323,12 @@
 		title={m['nav.dashboard']()}
 		description={m['dashboard.summary']({ count: list.totalCount.toLocaleString() })}
 	/>
+
+	<!-- Business ドメイン（Phase 6、要件 F-Y7）: 未入金・期限超過の一覧。
+	     以下のパネル群は Banto テンプレート同梱の items デモなので、Business の
+	     パネルはその外側（上）に置いて混ぜない（items 削除時に一緒に消えない
+	     ようにするため）。 -->
+	<OutstandingPanel />
 
 	<div class="stat-row">
 		<section class="stat-tile">

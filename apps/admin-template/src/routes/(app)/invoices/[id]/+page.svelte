@@ -45,7 +45,15 @@
 	const parsedId = Number(rawId);
 	const idValid = rawId !== '' && Number.isInteger(parsedId);
 
+	interface Settlement {
+		settledAmount: number;
+		remainingAmount: number;
+		settlementStatus: string;
+		overdue: boolean;
+	}
+
 	let detail = $state<InvoiceDetail | null>(null);
+	let settlement = $state<Settlement | null>(null);
 	let projects = $state<ProjectOption[]>([]);
 	let lines = $state<InvoiceLineInput[]>([]);
 	let note = $state('');
@@ -98,6 +106,12 @@
 			};
 			const result = await provider.getList<ProjectOption>('projects', params);
 			projects = result.rows.filter((p) => p.customerId === loaded.customerId);
+			// 入金状況（Phase 6、要件 F-Y4〜F-Y6）。残額・入金状態・期限超過は
+			// すべてサーバ側の導出値で、ここでは日付比較も金額計算もしない。
+			settlement =
+				loaded.status === 'DRAFT'
+					? null
+					: await provider.getOne<Settlement>('settlements', parsedId);
 		} catch (err) {
 			if (isProviderError(err) && err.body.kind === 'not_found') notFound = true;
 			else failed = true;
@@ -220,6 +234,20 @@
 				return m['invoices.taxExempt']();
 			default:
 				return m['invoices.taxOutOfScope']();
+		}
+	};
+
+	/** 入金状態の表示名（導出値。invoices.status には持たない）。 */
+	const settlementLabel = (status: string): string => {
+		switch (status) {
+			case 'PAID':
+				return m['invoices.settlementPaid']();
+			case 'PARTIALLY_PAID':
+				return m['outstanding.partiallyPaid']();
+			case 'CANCELLED':
+				return m['invoices.statusCancelled']();
+			default:
+				return m['outstanding.unpaid']();
 		}
 	};
 
@@ -425,6 +453,31 @@
 			</dl>
 		</section>
 
+		{#if settlement}
+			<section class="panel">
+				<h2>{m['invoices.settlementTitle']()}</h2>
+				<dl class="grand-totals">
+					<div>
+						<dt>{m['invoices.settledAmount']()}</dt>
+						<dd>{yen(settlement.settledAmount)}</dd>
+					</div>
+					<div class="strong">
+						<dt>{m['outstanding.remaining']()}</dt>
+						<dd>{yen(settlement.remainingAmount)}</dd>
+					</div>
+					<div>
+						<dt>{m['invoices.settlementStatus']()}</dt>
+						<dd class:overdue={settlement.overdue}>
+							{settlement.overdue
+								? m['outstanding.overdue']()
+								: settlementLabel(settlement.settlementStatus)}
+						</dd>
+					</div>
+				</dl>
+				<p class="note note--muted">{m['invoices.settlementNote']()}</p>
+			</section>
+		{/if}
+
 		{#if canWrite}
 			<div class="actions">
 				{#if isDraft}
@@ -569,6 +622,10 @@
 	.grand-totals dd {
 		margin: 0;
 		font-variant-numeric: tabular-nums;
+	}
+
+	.overdue {
+		color: var(--banto-danger);
 	}
 
 	.grand-totals .strong dd {
