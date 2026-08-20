@@ -171,6 +171,6 @@
 	.row-count {
 		margin: 0;
 		color: var(--banto-text-muted);
-		font-size: var(--banto-font-size-sm);
+		font-size: 0.85rem;
 	}
 </style>

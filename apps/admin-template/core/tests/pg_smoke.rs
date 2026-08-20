@@ -18,10 +18,16 @@
 
 use admin_template_core::audit::{AuditEntry, AuditLogService};
 use admin_template_core::backup::BackupService;
+use admin_template_core::customers::{CustomerInput, CustomersService, DAY_END_OF_MONTH};
 use admin_template_core::db::init_db_from_target;
+use admin_template_core::expenses::{ExpenseInput, ExpensesService};
 use admin_template_core::items::{ImportResult, ItemImportRow, ItemInput, ItemsService};
+use admin_template_core::masters::{CostRateInput, MastersService};
+use admin_template_core::profitability::ProfitabilityService;
+use admin_template_core::projects::{ProjectInput, ProjectsService};
 use admin_template_core::settings::SettingsService;
 use admin_template_core::users::{Role, UsersService};
+use admin_template_core::work_logs::{WorkLogInput, WorkLogsService};
 use banto_core::ListParams;
 use std::path::PathBuf;
 
@@ -35,6 +41,11 @@ async fn reset_schema(url: &str) {
         .expect("connect for schema reset");
     for stmt in [
         "DROP TABLE IF EXISTS attachments, audit_log, users, settings, items CASCADE",
+        // Business ドメイン（Phase 2〜）。テンプレート由来のテーブルだけを
+        // 落としていると、2回目以降のローカル実行でマイグレーションが
+        // 「既に存在する」で失敗する（CI は毎回新しいコンテナなので出ない）。
+        "DROP TABLE IF EXISTS expenses, work_logs, trips, cost_rates, work_categories, \
+         expense_categories, projects, customers CASCADE",
         "DROP TABLE IF EXISTS _sqlx_migrations",
     ] {
         sqlx::query(stmt)
@@ -313,5 +324,113 @@ async fn app_layer_crud_round_trips_on_postgres() {
     assert!(
         backup.pending_restore().await.is_none(),
         "pending_restore reports nothing staged on Postgres"
+    );
+
+    // --- Business ドメイン: 採算（Phase 4）の集計 SQL を実 PostgreSQL で ---
+    // `profitability` は SUM を使う唯一のサービス。PostgreSQL の
+    // `SUM(bigint)` は `numeric` を返すため `CAST(... AS BIGINT)` で包んで
+    // いるが、それが効いているかは実サーバに当てないと分からない（SQLite
+    // では型親和性で通ってしまう）。工数原価・経費の税抜換算まで通しで見る。
+    let customers = CustomersService::new(db.clone());
+    let customer = customers
+        .create(CustomerInput {
+            code: "PG-C001".to_string(),
+            name: "架空商事".to_string(),
+            contact_person: None,
+            address: None,
+            phone: None,
+            email: None,
+            billing_name: None,
+            closing_day: DAY_END_OF_MONTH,
+            payment_month_offset: 1,
+            payment_day: DAY_END_OF_MONTH,
+            note: None,
+        })
+        .await
+        .expect("customer on postgres");
+    let projects = ProjectsService::new(db.clone());
+    let project = projects
+        .create(ProjectInput {
+            code: String::new(),
+            customer_id: customer.id,
+            name: "架空案件".to_string(),
+            status: "IN_PROGRESS".to_string(),
+            started_on: None,
+            due_on: None,
+            estimate_amount: None,
+            contract_amount: Some(1_000_000),
+            scope: None,
+            note: None,
+        })
+        .await
+        .expect("project on postgres");
+
+    let masters = MastersService::new(db.clone());
+    for (code, rate) in [("DESIGN", 6_000), ("TRAVEL", 3_000)] {
+        masters
+            .set_cost_rate(CostRateInput {
+                work_category_code: code.to_string(),
+                hourly_rate: rate,
+            })
+            .await
+            .expect("cost rate upsert on postgres");
+    }
+
+    let work_logs = WorkLogsService::new(db.clone());
+    for (code, minutes) in [("DESIGN", 600), ("TRAVEL", 300)] {
+        work_logs
+            .create(WorkLogInput {
+                project_id: project.id,
+                trip_id: None,
+                worked_on: "2026-08-20".to_string(),
+                work_category_code: code.to_string(),
+                minutes,
+                applied_rate: None,
+                description: None,
+                invoiced: false,
+            })
+            .await
+            .expect("work log on postgres");
+    }
+
+    let expenses = ExpensesService::new(db.clone());
+    expenses
+        .create(ExpenseInput {
+            project_id: project.id,
+            trip_id: None,
+            spent_on: "2026-08-20".to_string(),
+            expense_category_code: "TRANSPORT".to_string(),
+            payee: None,
+            amount: 11_000,
+            tax_category: Some("STANDARD_10".to_string()),
+            description: None,
+            billable: true,
+            invoiced: false,
+        })
+        .await
+        .expect("expense on postgres");
+
+    let profitability = ProfitabilityService::new(db.clone());
+    let result = profitability
+        .get(project.id)
+        .await
+        .expect("profitability on postgres");
+    // 設計 600分 × 6,000円/時 = 60,000円 + 移動 300分 × 3,000円/時 = 15,000円
+    assert_eq!(result.work_cost, 75_000);
+    assert_eq!(result.total_minutes, 900);
+    assert_eq!(result.excluded_minutes, 300);
+    // 税込 11,000 円 → 税抜 10,000 円（切捨て）
+    assert_eq!(result.expense_cost, 10_000);
+    assert_eq!(result.billable_expense_cost, 10_000);
+    assert_eq!(result.total_cost, 85_000);
+    assert_eq!(result.gross_profit, -85_000);
+    // 実質時間単価は2種とも返る（要件 F-P2）
+    assert_eq!(
+        result.effective_rate_including_travel,
+        Some(-85_000 * 60 / 900)
+    );
+    assert_eq!(
+        result.effective_rate_excluding_travel,
+        Some(-85_000 * 60 / 600)
     );
 }

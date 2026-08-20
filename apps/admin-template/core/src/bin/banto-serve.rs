@@ -40,6 +40,7 @@ use admin_template_core::events::event_channel;
 use admin_template_core::expenses::ExpensesService;
 use admin_template_core::items::ItemsService;
 use admin_template_core::masters::MastersService;
+use admin_template_core::profitability::ProfitabilityService;
 use admin_template_core::projects::ProjectsService;
 use admin_template_core::rest::{api_router, audited_credential_verifier, Services};
 use admin_template_core::settings::SettingsService;
@@ -119,6 +120,8 @@ async fn main() {
     let work_logs = WorkLogsService::new(db.clone()).with_events(events.clone());
     let expenses = ExpensesService::new(db.clone()).with_events(events.clone());
     let trips = TripsService::new(db.clone()).with_events(events.clone());
+    // 採算は導出専用（変更が無いので `with_events` を持たない）。
+    let profitability = ProfitabilityService::new(db.clone());
     let users = UsersService::new(db.clone());
     let settings = SettingsService::new(db.clone());
     let backup = BackupService::new(db_path_buf.clone(), db.clone());
@@ -192,6 +195,7 @@ async fn main() {
         work_logs,
         expenses,
         trips,
+        profitability,
         users,
         settings,
         audit,

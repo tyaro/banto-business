@@ -12,6 +12,7 @@ pub mod events;
 pub mod expenses;
 pub mod items;
 pub mod masters;
+pub mod profitability;
 pub mod projects;
 pub mod rest;
 pub mod trips;

@@ -77,6 +77,7 @@ async fn router_with_role_tokens() -> (Router, String, String, String) {
     let work_logs = WorkLogsService::new(pool.clone());
     let expenses = ExpensesService::new(pool.clone());
     let trips = TripsService::new(pool.clone());
+    let profitability = ProfitabilityService::new(pool.clone());
     let (tx, _rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
     let users = UsersService::new(pool.clone());
@@ -134,6 +135,7 @@ async fn router_with_role_tokens() -> (Router, String, String, String) {
         work_logs,
         expenses,
         trips,
+        profitability,
         users,
         settings,
         audit,
@@ -157,6 +159,7 @@ async fn router_with_token() -> (Router, String) {
     let work_logs = WorkLogsService::new(pool.clone());
     let expenses = ExpensesService::new(pool.clone());
     let trips = TripsService::new(pool.clone());
+    let profitability = ProfitabilityService::new(pool.clone());
     let (tx, _rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
     let users = UsersService::new(pool.clone());
@@ -178,6 +181,7 @@ async fn router_with_token() -> (Router, String) {
         work_logs,
         expenses,
         trips,
+        profitability,
         users,
         settings,
         audit,
@@ -386,6 +390,7 @@ async fn update_via_rest_is_observable_on_the_event_channel() {
     let work_logs = WorkLogsService::new(pool.clone());
     let expenses = ExpensesService::new(pool.clone());
     let trips = TripsService::new(pool.clone());
+    let profitability = ProfitabilityService::new(pool.clone());
     let (tx, mut rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
     let users = UsersService::new(pool.clone());
@@ -404,6 +409,7 @@ async fn update_via_rest_is_observable_on_the_event_channel() {
         work_logs,
         expenses,
         trips,
+        profitability,
         users,
         settings,
         audit,
@@ -472,6 +478,7 @@ async fn router_with_setup(allow_setup: bool) -> Router {
     let work_logs = WorkLogsService::new(pool.clone());
     let expenses = ExpensesService::new(pool.clone());
     let trips = TripsService::new(pool.clone());
+    let profitability = ProfitabilityService::new(pool.clone());
     let (tx, _rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
     let users = UsersService::new(pool.clone());
@@ -489,6 +496,7 @@ async fn router_with_setup(allow_setup: bool) -> Router {
         work_logs,
         expenses,
         trips,
+        profitability,
         users,
         settings,
         audit,
@@ -689,6 +697,7 @@ async fn router_with_real_login(allow_setup: bool) -> (Router, AuditLogService) 
     let work_logs = WorkLogsService::new(pool.clone());
     let expenses = ExpensesService::new(pool.clone());
     let trips = TripsService::new(pool.clone());
+    let profitability = ProfitabilityService::new(pool.clone());
     let (tx, _rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
     let users = UsersService::new(pool.clone());
@@ -706,6 +715,7 @@ async fn router_with_real_login(allow_setup: bool) -> (Router, AuditLogService) 
         work_logs,
         expenses,
         trips,
+        profitability,
         users,
         settings,
         audit: audit.clone(),
@@ -1158,6 +1168,7 @@ async fn router_with_role_tokens_and_audit() -> (Router, AuditLogService, String
     let work_logs = WorkLogsService::new(pool.clone());
     let expenses = ExpensesService::new(pool.clone());
     let trips = TripsService::new(pool.clone());
+    let profitability = ProfitabilityService::new(pool.clone());
     let (tx, _rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
     let users = UsersService::new(pool.clone());
@@ -1202,6 +1213,7 @@ async fn router_with_role_tokens_and_audit() -> (Router, AuditLogService, String
         work_logs,
         expenses,
         trips,
+        profitability,
         users,
         settings,
         audit: audit.clone(),
@@ -1249,6 +1261,7 @@ async fn router_with_role_tokens_and_backup() -> (Router, tempfile::TempDir, Str
     let work_logs = WorkLogsService::new(db.clone());
     let expenses = ExpensesService::new(db.clone());
     let trips = TripsService::new(db.clone());
+    let profitability = ProfitabilityService::new(db.clone());
 
     let (tx, _rx) = broadcast::channel(16);
     let items = ItemsService::new(db.clone()).with_events(tx.clone());
@@ -1294,6 +1307,7 @@ async fn router_with_role_tokens_and_backup() -> (Router, tempfile::TempDir, Str
         work_logs,
         expenses,
         trips,
+        profitability,
         users,
         settings,
         audit,
@@ -2489,6 +2503,7 @@ async fn attachment_upload_and_delete_are_observable_on_the_event_channel() {
     let work_logs = WorkLogsService::new(pool.clone());
     let expenses = ExpensesService::new(pool.clone());
     let trips = TripsService::new(pool.clone());
+    let profitability = ProfitabilityService::new(pool.clone());
     let (tx, mut rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
     let users = UsersService::new(pool.clone());
@@ -2508,6 +2523,7 @@ async fn attachment_upload_and_delete_are_observable_on_the_event_channel() {
         work_logs,
         expenses,
         trips,
+        profitability,
         users,
         settings,
         audit,
@@ -2908,4 +2924,59 @@ async fn viewer_cannot_write_work_logs_expenses_or_trips() {
             .unwrap();
         assert_eq!(response.status(), StatusCode::FORBIDDEN, "{path}");
     }
+}
+
+// --- Business ドメイン（Phase 4 採算管理）の読み取り経路 ---
+
+/// 採算は viewer でも読める（読み取りは認証のみ。conventions §1）。
+/// 実質時間単価は移動込み・移動除くが**同時に**返る（要件 F-P2）。
+#[tokio::test]
+async fn viewer_can_read_project_profitability_with_both_effective_rates() {
+    let (router, _admin, editor, viewer) = router_with_role_tokens().await;
+    let project_id = seed_project(&router, &editor).await;
+
+    for (code, minutes) in [("DESIGN", 600), ("TRAVEL", 300)] {
+        let response = router
+            .clone()
+            .oneshot(post_json_auth(
+                "/api/work_logs",
+                &editor,
+                json!({
+                    "projectId": project_id,
+                    "workedOn": "2026-08-20",
+                    "workCategoryCode": code,
+                    "minutes": minutes
+                }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{code}");
+    }
+
+    let response = router
+        .clone()
+        .oneshot(get_auth(
+            &format!("/api/profitability/{project_id}"),
+            &viewer,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_json(response).await;
+    // 設計 600分 × 6,000円/時 = 60,000円 + 移動 300分 × 3,000円/時 = 15,000円
+    assert_eq!(body["workCost"], 75_000);
+    assert_eq!(body["totalMinutes"], 900);
+    assert_eq!(body["excludedMinutes"], 300);
+    assert_eq!(body["effectiveRateIncludingTravel"], -5_000);
+    assert_eq!(body["effectiveRateExcludingTravel"], -7_500);
+}
+
+#[tokio::test]
+async fn profitability_of_an_unknown_project_is_not_found() {
+    let (router, _admin, _editor, viewer) = router_with_role_tokens().await;
+    let response = router
+        .oneshot(get_auth("/api/profitability/9999", &viewer))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }

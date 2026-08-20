@@ -318,7 +318,8 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 	const ROLE_READ = [
 		{ tauri: 'audit_config_get', rest: 'GET /api/audit-log/config', role: 'Admin' },
 		{ tauri: 'audit_log_list', rest: 'POST /api/audit-log/list', role: 'Admin' },
-		{ tauri: 'system_info', rest: 'GET /api/system/info', role: 'Admin' }
+		{ tauri: 'system_info', rest: 'GET /api/system/info', role: 'Admin' },
+		{ tauri: 'profitability_get', rest: 'GET /api/profitability/{id}', role: 'Viewer' }
 	];
 
 	// desktop-only（OS/ローカル統合。REST を持たないのが正しい、§1 の対称対象外）。
@@ -355,6 +356,7 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 		'expenses_list',
 		'items_get',
 		'items_list',
+		'profitability_get',
 		'projects_get',
 		'projects_list',
 		'trips_get',
@@ -381,6 +383,7 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 		'GET /api/customers/{id}',
 		'GET /api/expenses/{id}',
 		'GET /api/items/{id}',
+		'GET /api/profitability/{id}',
 		'GET /api/projects/{id}',
 		'GET /api/trips/{id}',
 		'GET /api/trips/{id}/linked-counts',

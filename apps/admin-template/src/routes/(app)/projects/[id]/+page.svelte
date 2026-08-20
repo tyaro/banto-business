@@ -3,6 +3,10 @@
 	 * projects の編集・削除（docs/recipes/add-resource.md 手順8）。
 	 * `items/[id]` と同じ形。添付ファイル欄は持たない（Phase 3 で経費に
 	 * 領収書を付ける段階まで用途が無いため）。
+	 *
+	 * Phase 4 から、この画面に採算パネルを併置する（要件 F-P1: 案件詳細で
+	 * 契約額 / 案件売上 / 工数原価 / 直接経費 / 粗利 / 粗利率 を確認できる）。
+	 * 採算は導出値なので編集フォームとは別の読み取り経路で取る。
 	 */
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
@@ -18,6 +22,7 @@
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
 	import ErrorState from '$lib/components/ui/ErrorState.svelte';
 	import LoadingState from '$lib/components/ui/LoadingState.svelte';
+	import ProfitabilityPanel from '$lib/components/business/ProfitabilityPanel.svelte';
 
 	const resource = getResource('projects');
 	const schema = resource.schema as FormSchema;
@@ -125,6 +130,10 @@
 			</BantoForm>
 		{/if}
 	</div>
+
+	{#if idValid && !isNotFoundError}
+		<ProfitabilityPanel projectId={parsedId} />
+	{/if}
 </div>
 
 <style>
@@ -132,10 +141,13 @@
 		display: flex;
 		flex-direction: column;
 		gap: 1rem;
-		max-width: 720px;
+		/* 採算パネルの指標グリッドが2列以上に並ぶ幅。編集フォーム自体は
+		   `.form-panel` 側で従来どおりの幅に収まる。 */
+		max-width: 960px;
 	}
 
 	.form-panel {
+		max-width: 720px;
 		background: var(--banto-surface);
 		border: 1px solid var(--banto-border);
 		border-radius: var(--banto-radius-lg);
