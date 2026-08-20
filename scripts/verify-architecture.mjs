@@ -276,10 +276,6 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 		{ tauri: 'auth_login', rest: 'POST /api/auth/login' },
 		{ tauri: 'auth_logout', rest: 'POST /api/auth/logout' },
 		{ tauri: 'auth_change_password', rest: 'POST /api/auth/change-password' },
-		{ tauri: 'items_create', rest: 'POST /api/items', role: 'Editor' },
-		{ tauri: 'items_update', rest: 'PUT /api/items/{id}', role: 'Editor' },
-		{ tauri: 'items_delete', rest: 'DELETE /api/items/{id}', role: 'Editor' },
-		{ tauri: 'items_import', rest: 'POST /api/items/import', role: 'Editor' },
 		// Business ドメイン（Phase 2 基本マスター、docs/domain/schema.md §2）
 		{ tauri: 'customers_create', rest: 'POST /api/customers', role: 'Editor' },
 		{ tauri: 'customers_update', rest: 'PUT /api/customers/{id}', role: 'Editor' },
@@ -345,8 +341,7 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 		'auth_config_apply',
 		'panel_open',
 		'backups_open_folder',
-		'attachments_open_folder',
-		'items_export_csv_to_folder'
+		'attachments_open_folder'
 	]);
 
 	// 読み取り系（list/get/status。§1 により両経路とも監査せず、対称強制の対象外）。
@@ -371,8 +366,6 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 		'invoices_get',
 		'invoices_list',
 		'issuer_get',
-		'items_get',
-		'items_list',
 		'outstanding_list',
 		'payments_get',
 		'payments_list',
@@ -405,7 +398,6 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 		'GET /api/expenses/{id}',
 		'GET /api/invoices/{id}',
 		'GET /api/issuer',
-		'GET /api/items/{id}',
 		'GET /api/profitability/{id}',
 		'GET /api/payments/{id}',
 		'GET /api/settlements/{id}',
@@ -426,7 +418,6 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 		'POST /api/expenses/list',
 		'POST /api/invoices/list',
 		'POST /api/invoices/candidates',
-		'POST /api/items/list',
 		'POST /api/outstanding/list',
 		'POST /api/payments/list',
 		'POST /api/projects/list',
@@ -538,7 +529,7 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 		// その本体内の `.route("path", <verbs>(...))` の各メソッドに割り当てる。
 		// 走査先は上の doc-sync (d) と同じ2ディレクトリ: ドメイン非依存のルータは
 		// `banto-server`（theme C PR-C4, docs/template-scope.md §7 移行順 ④）、
-		// アプリ固有の `items`/`attachments` はアプリの `rest/` にある。ロール床は
+		// アプリ固有の Business ドメイン/`attachments` はアプリの `rest/` にある。ロール床は
 		// どちらに実装があっても同一でなければならない。
 		const restRouteRole = {};
 		for (const file of restRouterDirs.flatMap((dir) => [...walk(dir, ['.rs'])])) {

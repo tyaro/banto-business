@@ -12,7 +12,6 @@ pub mod events;
 pub mod expenses;
 pub mod invoices;
 pub mod issuer;
-pub mod items;
 pub mod masters;
 pub mod payments;
 pub mod profitability;

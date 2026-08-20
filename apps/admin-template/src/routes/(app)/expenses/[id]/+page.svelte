@@ -1,8 +1,10 @@
 <script lang="ts">
 	/**
 	 * expenses の編集・削除（docs/recipes/add-resource.md 手順8）。
-	 * `items/[id]` と同じ形。添付ファイル欄は持たない（Phase 3 で経費に
-	 * 領収書を付ける段階まで用途が無いため）。
+	 *
+	 * 領収書の添付欄を持つ（要件 F-E3）。ここに置く領収書は**案件へ紐付ける
+	 * ための参照コピーであって正本ではない**（CLAUDE.md 1.6）。正本は会計ソフト
+	 * 側にあり、電子帳簿保存法の検索要件・訂正削除履歴はこちらでは満たさない。
 	 */
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
@@ -10,7 +12,11 @@
 	import { BantoForm, createFormStore } from '@banto/forms';
 	import type { FormSchema } from '@banto/forms';
 	import { createFormResource, getResource, isProviderError } from '@banto/admin-core';
+	import { AttachmentsPanel } from '@banto/attachments';
 	import * as m from '$lib/paraglide/messages';
+	import { normalizeFormValues } from '$lib/banto/formValues';
+	import { isAttachmentsAvailable } from '$lib/banto/attachmentsAdmin';
+	import { attachmentsClient } from '$lib/banto/attachmentsClient';
 	import { formValidationMessages } from '$lib/banto/i18n';
 	import { sessionStore } from '$lib/session.svelte';
 	import { canWriteResources } from '$lib/permissions';
@@ -27,7 +33,7 @@
 
 	// Rust 側のコマンドは `id: i64` を宣言しており、Tauri の serde は文字列を
 	// 数値に強制変換しないため、ルートパラメータ（常に文字列）を数値へ変換
-	// してから DataProvider へ渡す（`items/[id]` と同じ理由）。
+	// してから DataProvider へ渡す。
 	const rawId = page.params.id ?? '';
 	const parsedId = Number(rawId);
 	const idValid = rawId !== '' && Number.isInteger(parsedId);
@@ -57,7 +63,7 @@
 
 	async function handleSubmit(values: Record<string, unknown>) {
 		if (!formResource || !canWrite) return;
-		const result = await formResource.submit(values);
+		const result = await formResource.submit(normalizeFormValues(schema, values));
 		if (result.ok) {
 			goto(`${base}/expenses`);
 		} else {
@@ -125,6 +131,22 @@
 			</BantoForm>
 		{/if}
 	</div>
+
+	<!--
+		領収書の添付（要件 F-E3）。レコードが読めた後にだけ出す（`storeReady` は
+		`idValid` を含むが、読みやすさのため明示しておく）。まだ存在しない
+		／読めなかったレコードに対して一覧を取りに行かせない。
+		デモモードでは丸ごと隠す（`isAttachmentsAvailable()` が false）。
+		「利用できません」と出すより、フォームの下に何も無い方が壊れて見えない。
+	-->
+	{#if idValid && storeReady && isAttachmentsAvailable()}
+		<AttachmentsPanel
+			client={attachmentsClient}
+			resource="expenses"
+			resourceId={String(parsedId)}
+			{canWrite}
+		/>
+	{/if}
 </div>
 
 <style>

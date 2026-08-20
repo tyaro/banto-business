@@ -33,7 +33,7 @@ export const demoAuthProvider: AuthProvider = {
 		// full 'admin' - this is the only environment where usersAdmin.ts is
 		// unconditionally unavailable anyway (see isUsersAdminAvailable()),
 		// so this only matters for permissions.ts-gated UI elsewhere (nav,
-		// items page, settings page), which should behave exactly as if a
+		// list pages, settings page), which should behave exactly as if a
 		// real admin were logged in.
 		return isSessionAuthed() ? { id: 'admin', name: '管理者', role: 'admin' } : null;
 	},

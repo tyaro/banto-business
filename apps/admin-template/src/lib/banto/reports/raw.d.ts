@@ -5,7 +5,7 @@
  * `/// <reference types="vite/client" />` somewhere - which nothing in this
  * app currently has (SvelteKit's generated `ambient.d.ts` only references
  * `@sveltejs/kit`). Declaring the exact suffix this app actually uses here
- * keeps `daily.md?raw` (items/report/+page.svelte) type-checked without
+ * keeps `invoice.md?raw` (invoices/[id]/print/+page.svelte) type-checked without
  * relying on that being pulled in indirectly.
  */
 declare module '*.md?raw' {

@@ -26,7 +26,7 @@ export function gridMessages(): Partial<GridMessages> {
 		filterApply: () => m['grid.filterApply'](),
 		filterClear: () => m['grid.filterClear'](),
 		inlineEditInvalid: () => m['grid.inlineEditInvalid'](),
-		emptyState: () => m['items.list.empty'](),
+		emptyState: () => m['grid.empty'](),
 		groupCountSuffix: (count) => m['grid.groupCountSuffix']({ count })
 	};
 }

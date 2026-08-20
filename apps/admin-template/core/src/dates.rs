@@ -31,7 +31,7 @@ pub fn days_since_epoch(iso_date: &str) -> Option<i64> {
         return None;
     }
 
-    // days_from_civil（Hinnant）。`iso_date_from_days_since_epoch` の逆。
+    // days_from_civil（Hinnant）。
     let y = if month <= 2 { year - 1 } else { year };
     let era = if y >= 0 { y } else { y - 399 } / 400;
     let yoe = y - era * 400; // [0, 399]

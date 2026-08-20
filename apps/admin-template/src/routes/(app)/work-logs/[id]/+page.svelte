@@ -1,8 +1,7 @@
 <script lang="ts">
 	/**
 	 * work-logs の編集・削除（docs/recipes/add-resource.md 手順8）。
-	 * `items/[id]` と同じ形。添付ファイル欄は持たない（Phase 3 で経費に
-	 * 領収書を付ける段階まで用途が無いため）。
+	 * 添付ファイル欄は持たない（領収書を付けるのは経費だけ、要件 F-E3）。
 	 */
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
@@ -11,6 +10,7 @@
 	import type { FormSchema } from '@banto/forms';
 	import { createFormResource, getResource, isProviderError } from '@banto/admin-core';
 	import * as m from '$lib/paraglide/messages';
+	import { normalizeFormValues } from '$lib/banto/formValues';
 	import { formValidationMessages } from '$lib/banto/i18n';
 	import { sessionStore } from '$lib/session.svelte';
 	import { canWriteResources } from '$lib/permissions';
@@ -27,7 +27,7 @@
 
 	// Rust 側のコマンドは `id: i64` を宣言しており、Tauri の serde は文字列を
 	// 数値に強制変換しないため、ルートパラメータ（常に文字列）を数値へ変換
-	// してから DataProvider へ渡す（`items/[id]` と同じ理由）。
+	// してから DataProvider へ渡す。
 	const rawId = page.params.id ?? '';
 	const parsedId = Number(rawId);
 	const idValid = rawId !== '' && Number.isInteger(parsedId);
@@ -57,7 +57,7 @@
 
 	async function handleSubmit(values: Record<string, unknown>) {
 		if (!formResource || !canWrite) return;
-		const result = await formResource.submit(values);
+		const result = await formResource.submit(normalizeFormValues(schema, values));
 		if (result.ok) {
 			goto(`${base}/work-logs`);
 		} else {

@@ -42,7 +42,7 @@ banto-business/
 └── e2e/
 ```
 
-**新しい CRUD リソースの追加は `docs/recipes/add-resource.md` の手順に従う**（`items` のルート一式をコピーして書き換えるのが Banto の正式方式。動的ルート生成は不採用）。
+**新しい CRUD リソースの追加は `docs/recipes/add-resource.md` の手順に従う**（既存リソースのルート一式をコピーして書き換えるのが Banto の正式方式。動的ルート生成は不採用）。レシピは `items` を例に書かれているが、`items` は削除済みなので `customers` を写すこと（下記「`items` デモは削除済み」）。
 
 ### ディレクトリ責務
 
@@ -297,9 +297,15 @@ Phase 6 着手時にも1件（C-19：差額が請求書を消し込むか）が�
 案件売上は `ProfitabilityService::revenue_for` が**確定済み（ISSUED）の
 InvoiceLine 合計**として集計する（Draft と取消済みは立たない）。
 
+**経費の領収書は `expenses/[id]` の添付欄で扱う**（要件 F-E3、`@banto/attachments` の `AttachmentsPanel`）。ここに置くのは**案件へ紐付けるための参照コピーであって正本ではない**（CLAUDE.md 1.6）。経費を消したときは両経路（`expenses_delete_body` / `rest::expenses::expenses_delete`）が添付も掃除する。
+
 **リソース識別子は Rust の識別子として妥当な綴りにする**（`work_logs` / `cost_rates`）。`@banto/admin-core` の DataProvider が Tauri コマンドを `${resource}_list` の規約で呼ぶため、ハイフンを含む名前はコマンドを定義できない（`docs/banto-feedback.md` に記録）。画面の URL は `/work-logs` のようにケバブケースで構わない。
 
-Phase 6 までで `docs/banto-feedback.md` に13件記録済み。**`items` デモの削除は未実施**（Phase 4 以降の任意のタイミングで行う。もう手本としては使わない）。
+`docs/banto-feedback.md` に15件記録済み。
+
+**`items` デモは削除済み**（2026-08-20、Phase 7 の直前。削除範囲と経緯は `docs/template-origin.md`）。新しいリソースを足すときの手本は `docs/recipes/add-resource.md` の手順に従いつつ、このリポジトリの実物としては **`customers`（最小構成）** または **`expenses`（領収書の添付あり）** を読むこと。レシピ本文は Banto の文書なので `items` を例に書かれたままだが、それらのファイルはもう無い。
+
+デモ削除に伴い、**初回起動時の DB は空**になった（1,000 行のデモシードは `items` が唯一の投入先だった）。ダッシュボードも未入金・期限超過のパネルだけになっている。業務データを使った指標を並べるのは Phase 7 の実運用評価で「毎日何を見たいか」が決まってから。
 
 **Phase 1 が確定するまで Phase 2 以降のテーブルを先行実装しない。**
 

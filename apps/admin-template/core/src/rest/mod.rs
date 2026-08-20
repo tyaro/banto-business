@@ -1,5 +1,5 @@
 //! REST surface for the embedded server (spec §11.1): exposes the same
-//! `ItemsService` used by `src-tauri`'s `items_*` commands over HTTP, so a
+//! services used by `src-tauri`'s Tauri commands over HTTP, so a
 //! LAN browser's `HttpDataProvider` (Phase B,
 //! `packages/admin-core/src/providers/tauri.ts` is the wire contract it
 //! must match) hits the exact same service layer and DB.
@@ -16,12 +16,6 @@
 //! | GET    | `/api/auth/identity` | -              | `Identity \| null`     |
 //! | POST   | `/api/auth/change-password` | `{currentPassword,newPassword}` | `{success}` (auth required) |
 //! | GET    | `/api/events`        | -              | SSE stream of `ServerEvent` |
-//! | POST   | `/api/items/list`    | `ListParams`   | `ListResult<Item>` (any role) |
-//! | GET    | `/api/items/{id}`    | -              | `Item` (any role)      |
-//! | POST   | `/api/items`         | `ItemInput`    | `Item` (editor+)        |
-//! | PUT    | `/api/items/{id}`    | `ItemInput`    | `Item` (editor+)        |
-//! | DELETE | `/api/items/{id}`    | -              | 204 (editor+)           |
-//! | POST   | `/api/items/import`  | `ItemImportRow[]` | `ImportResult` (editor+, spec M15) |
 //! | POST   | `/api/customers/list` | `ListParams`  | `ListResult<Customer>` (any role) |
 //! | GET    | `/api/customers/{id}` | -            | `Customer` (any role)   |
 //! | POST   | `/api/customers`     | `CustomerInput` | `Customer` (editor+)  |
@@ -100,8 +94,8 @@
 //! `scripts/verify-architecture.mjs` rule 8 anchors on it. The router
 //! IMPLEMENTATIONS, however, are split by who owns them:
 //!
-//! - App-specific, and therefore this crate's: `items` (`/api/items/*`,
-//!   the demo resource a template adopter replaces) and `attachments`
+//! - App-specific, and therefore this crate's: the Business ドメイン
+//!   (`/api/customers/*` 以下 `/api/payments/*` まで) and `attachments`
 //!   (`/api/attachments/*`, M20 - `resource`/`resourceId` are app data).
 //! - Domain-agnostic, and therefore `banto_server::routes`: the
 //!   `/api/auth/*` extras, `/api/users/*`, `/api/audit-log/*`,
@@ -118,7 +112,7 @@
 //! settings (theme/preset/dock layout), namespaced by the caller's own
 //! `username` (`SettingsService::ui_get`/`ui_set` - see that module for the
 //! `ui.{username}.{key}` storage key scheme). Guarded by `require_auth`
-//! alone - unlike `items`/`users`, there is no role floor: a `viewer` may
+//! alone - unlike the domain resources/`users`, there is no role floor: a `viewer` may
 //! freely read/write their OWN UI preferences, they just cannot touch
 //! anyone else's (there is no way to name another user's key over this
 //! wire - `username` always comes from the caller's own bearer token, never
@@ -132,7 +126,7 @@
 //! Tauri command instead, spec §10), while `banto-serve` enables it via
 //! `BANTO_ALLOW_SETUP=1` so this REST path is exercisable standalone.
 //!
-//! `POST /api/items/list` (rather than `GET` with query-string encoded
+//! `POST /api/customers/list` (rather than `GET` with query-string encoded
 //! `ListParams`) is chosen deliberately: `ListParams` (sort/filters/
 //! pagination, spec §3.2) is a nested structure, and sending it as a JSON
 //! body makes the wire shape byte-for-byte identical to what
@@ -145,18 +139,18 @@
 //!
 //! ## RBAC (spec M10, `docs/roadmap.md`)
 //!
-//! On top of `require_auth` (valid session, any role), mutating `items`
+//! On top of `require_auth` (valid session, any role), mutating domain
 //! routes and all `/api/users` routes are additionally gated by
 //! [`require_role_at_least`]: it re-resolves the bearer token to an
 //! [`banto_server::Identity`], parses `Identity.role` into [`Role`], and rejects with
 //! `403 { "kind": "forbidden" }` (`banto_core::ErrorBody::Forbidden`) if the
 //! caller's role is not at least the route's minimum. `viewer` can read
-//! (`items` list/get); `editor` and up can also write; only `admin` can
+//! (domain list/get); `editor` and up can also write; only `admin` can
 //! manage other accounts.
 //!
 //! ## Audit log (spec M14, `docs/roadmap.md`)
 //!
-//! Every mutating handler above (`items`/`users` create/update/delete,
+//! Every mutating handler above (domain/`users` create/update/delete,
 //! password reset, self-service password change) records a
 //! `crate::audit::AuditEntry` to [`crate::audit::AuditLogService`] once its
 //! underlying service call has already succeeded (`origin: "rest"`);
@@ -166,18 +160,6 @@
 //! `logout`; and `auth_setup_handler` records `setup`. Read routes
 //! (`list`/`get`) are never audited. The trail itself is only readable via
 //! `POST /api/audit-log/list`, `admin`-only.
-//!
-//! `POST /api/items/import` (spec M15) is a partial exception to "once its
-//! underlying service call has already succeeded": [`ItemsService::import`]
-//! itself never fails on bad ROW data (an all-or-nothing rollback is a
-//! successful `Ok(ImportResult)` with `errors` populated, spec M15 design
-//! decision - see that method's doc comment), so [`items_import`] always
-//! records exactly one `action: "import"` entry - `result: "ok"` with a
-//! `{created,updated}` summary when `errors` is empty, `result: "failed"`
-//! with an `{errorCount}` summary when the batch was rolled back. It only
-//! skips the audit write the way every other handler does: when the
-//! service call returns `Err` outright (e.g. the row-count limit), which
-//! `?`-propagates straight to a `422` before this handler's audit code runs.
 //!
 //! `/api/backups/*` (spec M17): `admin`-only, guarded the same way
 //! `/api/users/*`/`/api/audit-log/*` are. `POST /api/backups` records
@@ -203,7 +185,8 @@
 //! `crate::backup::BackupService::stage_restore_from_bytes`).
 //!
 //! `/api/attachments/*` (spec `docs/attachments-plan.md` §3.5, M20 unit B):
-//! same read/write RBAC split as `items` (`viewer`+ read, `editor`+ write),
+//! same read/write RBAC split as the domain routes (`viewer`+ read,
+//! `editor`+ write),
 //! backed by `banto_attachments::AttachmentsService`. Upload is raw `Bytes`
 //! with metadata on the query string, same "no multipart dependency" design
 //! as `/api/backups/restore` above; `?fileName=` here IS actually used
@@ -242,7 +225,7 @@ use serde::Deserialize;
 use serde_json::json;
 use tokio::sync::broadcast;
 
-use crate::audit::{AuditEntry, AuditLogService};
+use crate::audit::AuditLogService;
 use crate::backup::BackupService;
 use crate::customers::{Customer, CustomerInput, CustomersService};
 use crate::expenses::{Expense, ExpenseInput, ExpensesService};
@@ -250,7 +233,6 @@ use crate::invoices::{
     CandidateLine, CandidateQuery, Invoice, InvoiceDetail, InvoiceInput, InvoicesService,
 };
 use crate::issuer::{IssuerInput, IssuerService, IssuerSettings};
-use crate::items::{ImportResult, Item, ItemImportRow, ItemInput, ItemsService};
 use crate::masters::{
     CostRateInput, CostRateValues, ExpenseCategory, MastersService, WorkCategory,
 };
@@ -268,7 +250,6 @@ mod customers;
 mod expenses;
 mod invoices;
 mod issuer;
-mod items;
 mod masters;
 mod payments;
 mod profitability;
@@ -290,7 +271,6 @@ use customers::customers_router;
 use expenses::expenses_router;
 use invoices::invoices_router;
 use issuer::issuer_router;
-use items::items_router;
 use masters::masters_router;
 use payments::payments_router;
 use profitability::profitability_router;
@@ -321,7 +301,6 @@ const ATTACHMENT_BODY_LIMIT_SLACK_BYTES: usize = 1024 * 1024;
 /// ordering or lifetime relationship between them, so the caller may build
 /// this in any order.
 pub struct Services {
-    pub items: ItemsService,
     /// Business ドメイン（Phase 2 基本マスター）。
     pub customers: CustomersService,
     pub projects: ProjectsService,
@@ -348,8 +327,8 @@ pub struct Services {
 /// Compose the full `/api/*` router (spec §11.1): auth routes (login/
 /// logout/check/identity from `banto_server` - wrapped with an audit-log
 /// hook for `logout`, spec M14 - plus status/setup/change-password here
-/// since those need `UsersService`), SSE events, the `items` CRUD routes
-/// (RBAC-split read/write, spec M10), the `admin`-only `users` management
+/// since those need `UsersService`), SSE events, the Business ドメインの
+/// CRUD routes (RBAC-split read/write, spec M10), the `admin`-only `users` management
 /// routes (spec M10), the `admin`-only `audit-log` viewer (spec M14), the
 /// `admin`-only `backups` routes (spec M17), the `attachments` CRUD routes
 /// (RBAC-split read/write, spec `docs/attachments-plan.md` §3.5 M20 unit
@@ -364,7 +343,6 @@ pub fn api_router(
     allow_setup: bool,
 ) -> Router {
     let Services {
-        items,
         customers,
         projects,
         masters,
@@ -400,17 +378,16 @@ pub fn api_router(
             allow_setup,
         ))
         .merge(sse_route(auth.clone(), events.clone()))
-        .merge(items_router(
-            items,
-            audit.clone(),
-            auth.clone(),
-            attachments.clone(),
-        ))
         .merge(customers_router(customers, audit.clone(), auth.clone()))
         .merge(projects_router(projects, audit.clone(), auth.clone()))
         .merge(masters_router(masters, audit.clone(), auth.clone()))
         .merge(work_logs_router(work_logs, audit.clone(), auth.clone()))
-        .merge(expenses_router(expenses, audit.clone(), auth.clone()))
+        .merge(expenses_router(
+            expenses,
+            audit.clone(),
+            auth.clone(),
+            attachments.clone(),
+        ))
         .merge(trips_router(trips, audit.clone(), auth.clone()))
         .merge(profitability_router(profitability, auth.clone()))
         .merge(invoices_router(invoices, audit.clone(), auth.clone()))

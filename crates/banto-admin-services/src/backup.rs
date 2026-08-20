@@ -48,12 +48,17 @@ const BACKUPS_DIR_NAME: &str = "backups";
 const PENDING_RESTORE_FILE_NAME: &str = "restore-pending.sqlite3";
 
 /// Tables a file must have to be accepted as a restorable Banto database
-/// (spec M17 "スキーマ妥当性: 必須テーブル（items, settings, users,
-/// audit_log）が存在すること"). Deliberately does not check COLUMNS, only
-/// table presence - a coarse but cheap sanity check that this is a Banto DB
-/// at all (not, say, a random unrelated `.sqlite3` file), not a full schema
-/// migration compatibility check.
-const REQUIRED_TABLES: [&str; 4] = ["items", "settings", "users", "audit_log"];
+/// (spec M17 "スキーマ妥当性: 必須テーブルが存在すること"). Deliberately does
+/// not check COLUMNS, only table presence - a coarse but cheap sanity check
+/// that this is a Banto DB at all (not, say, a random unrelated `.sqlite3`
+/// file), not a full schema migration compatibility check.
+///
+/// Only tables Banto itself always creates are listed. The demo `items`
+/// table used to be in here, but that is an app-owned table the template's
+/// own derivation guide tells adopters to delete - and with it listed, the
+/// first backup taken after that deletion failed this check, silently
+/// breaking restore for every adopter who followed the guide.
+const REQUIRED_TABLES: [&str; 3] = ["settings", "users", "audit_log"];
 
 /// One backup file, as listed/created by [`BackupService::list`]/
 /// [`BackupService::create`]. `created_at` for [`BackupService::create`]

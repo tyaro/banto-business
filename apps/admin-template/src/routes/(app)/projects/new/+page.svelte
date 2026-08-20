@@ -1,7 +1,7 @@
 <script lang="ts">
 	/**
 	 * projects の新規作成（docs/recipes/add-resource.md 手順8）。
-	 * `items/new` と同じ形: リソース定義のスキーマをそのまま `BantoForm` に
+	 * リソース定義のスキーマをそのまま `BantoForm` に
 	 * 渡し、保存は `createFormResource` 経由で DataProvider に投げる。
 	 */
 	import { goto } from '$app/navigation';
@@ -10,6 +10,7 @@
 	import type { FormSchema } from '@banto/forms';
 	import { createFormResource, getResource } from '@banto/admin-core';
 	import * as m from '$lib/paraglide/messages';
+	import { normalizeFormValues } from '$lib/banto/formValues';
 	import { formValidationMessages } from '$lib/banto/i18n';
 	import PageHeader from '$lib/components/ui/PageHeader.svelte';
 	import LoadingState from '$lib/components/ui/LoadingState.svelte';
@@ -26,7 +27,7 @@
 	});
 
 	async function handleSubmit(values: Record<string, unknown>) {
-		const result = await formResource.submit(values);
+		const result = await formResource.submit(normalizeFormValues(schema, values));
 		if (result.ok) {
 			goto(`${base}/projects`);
 		} else {

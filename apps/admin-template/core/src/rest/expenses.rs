@@ -15,15 +15,16 @@ async fn expenses_get(
     Ok(Json(expenses.get(id).await?))
 }
 
-/// 書き込みハンドラの State（`items` の `ItemsWriteState` と同型）:
-/// 変更そのものに使う `ExpensesService` と、成功後に監査記録を残すための
-/// `AuditLogService` / `AuthState`（conventions §1: mutating は両経路で
-/// 同一の認可・監査を通す）。
+/// 書き込みハンドラの State: 変更そのものに使う `ExpensesService` と、
+/// 成功後に監査記録を残すための `AuditLogService` / `AuthState`
+/// （conventions §1: mutating は両経路で同一の認可・監査を通す）。
+/// `attachments` は削除時の領収書の掃除にだけ使う（下記 `expenses_delete`）。
 #[derive(Clone)]
 struct ExpensesWriteState {
     expenses: ExpensesService,
     audit: AuditLogService,
     auth: AuthState,
+    attachments: AttachmentsService,
 }
 
 async fn expenses_create(
@@ -71,6 +72,25 @@ async fn expenses_delete(
     Path(id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
     state.expenses.delete(id).await?;
+    // 消した経費に紐づいたままの領収書（要件 F-E3）を片付ける。best-effort:
+    // ここで失敗しても経費の削除自体は既に成功しているので、クライアントには
+    // エラーを返さない（経費は消えており、残った添付行は掃除漏れであって
+    // データ損失ではない）。
+    let attachments_removed = match state
+        .attachments
+        .delete_for_record("expenses", &id.to_string())
+        .await
+    {
+        Ok(count) => count,
+        Err(err) => {
+            eprintln!(
+                "banto: 経費 {id} の領収書削除に失敗しました（経費自体の削除は完了済み）: {err}"
+            );
+            0
+        }
+    };
+    let detail =
+        (attachments_removed > 0).then(|| json!({ "attachmentsRemoved": attachments_removed }));
     record_write(
         &state.audit,
         &state.auth,
@@ -78,7 +98,7 @@ async fn expenses_delete(
         "delete",
         "expenses",
         Some(&id.to_string()),
-        None,
+        detail,
     )
     .await;
     Ok(StatusCode::NO_CONTENT)
@@ -99,11 +119,13 @@ fn expenses_write_router(
     expenses: ExpensesService,
     audit: AuditLogService,
     auth: AuthState,
+    attachments: AttachmentsService,
 ) -> Router {
     let state = ExpensesWriteState {
         expenses,
         audit: audit.clone(),
         auth: auth.clone(),
+        attachments,
     };
     Router::new()
         .route("/api/expenses", post(expenses_create))
@@ -130,7 +152,12 @@ pub(super) fn expenses_router(
     expenses: ExpensesService,
     audit: AuditLogService,
     auth: AuthState,
+    attachments: AttachmentsService,
 ) -> Router {
-    expenses_read_router(expenses.clone(), auth.clone())
-        .merge(expenses_write_router(expenses, audit, auth))
+    expenses_read_router(expenses.clone(), auth.clone()).merge(expenses_write_router(
+        expenses,
+        audit,
+        auth,
+        attachments,
+    ))
 }

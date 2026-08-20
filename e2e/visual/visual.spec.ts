@@ -83,7 +83,7 @@ interface DiagonalPage {
 // shoots the diagonal (light/standard, dark/glass) at the one baseline
 // viewport (1440x900).
 const DIAGONAL_PAGES: DiagonalPage[] = [
-	{ name: 'items', path: '/items', heading: '商品' },
+	{ name: 'customers', path: '/customers', heading: '顧客' },
 	{ name: 'users', path: '/users', heading: 'ユーザー管理' },
 	{ name: 'settings', path: '/settings', heading: '設定' }
 ];

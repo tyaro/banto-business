@@ -15,6 +15,7 @@
 	import type { FormSchema } from '@banto/forms';
 	import { createFormResource, getResource } from '@banto/admin-core';
 	import * as m from '$lib/paraglide/messages';
+	import { normalizeFormValues } from '$lib/banto/formValues';
 	import { formValidationMessages } from '$lib/banto/i18n';
 	import PageHeader from '$lib/components/ui/PageHeader.svelte';
 	import LoadingState from '$lib/components/ui/LoadingState.svelte';
@@ -38,7 +39,7 @@
 
 	async function handleSubmit(values: Record<string, unknown>) {
 		const result = await formResource.submit({
-			...values,
+			...normalizeFormValues(schema, values),
 			generate: {
 				travelMinutesOneWay,
 				onsiteMinutesPerDay,

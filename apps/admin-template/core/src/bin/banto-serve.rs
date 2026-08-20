@@ -40,7 +40,6 @@ use admin_template_core::events::event_channel;
 use admin_template_core::expenses::ExpensesService;
 use admin_template_core::invoices::InvoicesService;
 use admin_template_core::issuer::IssuerService;
-use admin_template_core::items::ItemsService;
 use admin_template_core::masters::MastersService;
 use admin_template_core::payments::PaymentsService;
 use admin_template_core::profitability::ProfitabilityService;
@@ -112,9 +111,8 @@ async fn main() {
         .expect("init_db should succeed");
 
     let events = event_channel();
-    let items = ItemsService::new(db.clone()).with_events(events.clone());
-    // Business ドメイン（Phase 2 基本マスター）。`items` と同じく、SSE で
-    // 変更を配信するためイベント送信器を付ける。
+    // Business ドメイン（Phase 2 基本マスター）。SSE で変更を配信するため
+    // イベント送信器を付ける。
     let customers = CustomersService::new(db.clone()).with_events(events.clone());
     let projects = ProjectsService::new(db.clone()).with_events(events.clone());
     // Phase 3（工数・経費）。Trip の一括生成は work_logs / expenses も
@@ -196,7 +194,6 @@ async fn main() {
     // the baseline security headers, regardless of which inner router
     // produced it.
     let services = Services {
-        items,
         customers,
         projects,
         masters,
