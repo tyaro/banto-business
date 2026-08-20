@@ -7,24 +7,21 @@
  * setup screen. All scenarios share ONE browser page/session and run in
  * file order (`describe.serial` + `workers: 1`, config-wide): later
  * scenarios rely on state earlier ones created (the admin account, the
- * item, the viewer account, the audit trail, ...), the same way a person
+ * customer, the viewer account, the audit trail, ...), the same way a person
  * clicking through the app once would. This is intentionally NOT a
  * from-scratch-state-per-test suite - keep new scenarios in this ordering
  * discipline rather than trying to make them independent.
  *
- * Deliberately scoped to a smoke pass (one scenario per screen, ~11 tests
- * total, per roadmap M18's non-scope note) - not exhaustive coverage of any
- * one feature (M14 audit log, M15 CSV, M16 command palette, M17 backups,
- * M20 attachments already have their own focused unit/integration tests
- * elsewhere).
+ * Deliberately scoped to a smoke pass (one scenario per screen, per roadmap
+ * M18's non-scope note) - not exhaustive coverage of any one feature (M14
+ * audit log, M16 command palette, M17 backups, M20 attachments already have
+ * their own focused unit/integration tests elsewhere).
  *
  * Flakiness: no explicit `waitForTimeout`/`sleep` anywhere in this file -
  * every wait is either Playwright's built-in locator auto-retry
- * (`expect(locator)...`) or a real event (`page.waitForEvent('download')`,
- * `page.once('dialog', ...)`).
+ * (`expect(locator)...`) or a real event (`page.once('dialog', ...)`).
  */
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import fs from 'node:fs';
 
 const ADMIN_USERNAME = 'e2e-admin';
 const ADMIN_PASSWORD = 'E2eAdminPass1';
@@ -38,15 +35,15 @@ const VIEWER_DISPLAY_NAME = 'E2E閲覧者';
 // suite always starts from a fresh DB, so that shouldn't happen, but the
 // name doubling as the grid-filter needle makes it worth being paranoid)
 // can never collide with the row this run creates.
-const ITEM_NAME = `E2Eテスト商品-${Date.now()}`;
-const ITEM_PRICE = 1200;
-const ITEM_PRICE_UPDATED = 1500;
-const ITEM_STOCK = 10;
+const CUSTOMER_CODE = `E2E-${Date.now()}`;
+const CUSTOMER_NAME = '架空商事';
+const CUSTOMER_NAME_UPDATED = '架空商事（改称後）';
 
-// M20 attachments scenario (docs/attachments-plan.md §4 unit D): a
-// dedicated item so uploads/deletes never touch the item scenario 3 already
-// created and deleted.
-const ATTACHMENT_ITEM_NAME = `E2E添付テスト商品-${Date.now()}`;
+// 領収書の添付シナリオ（要件 F-E3）。経費は案件に、案件は顧客にぶら下がるので
+// 専用の顧客→案件→経費を1本作る。scenario 3 の顧客は消えるため使い回さない。
+const ATTACHMENT_CUSTOMER_CODE = `E2E-ATT-${Date.now()}`;
+const ATTACHMENT_PROJECT_NAME = `E2E添付テスト案件-${Date.now()}`;
+const ATTACHMENT_EXPENSE_PAYEE = `E2E添付テスト支払先-${Date.now()}`;
 const PNG_FILE_NAME = 'attachment-test.png';
 const PNG_FILE_NAME_2 = 'attachment-test-2.png';
 const TXT_FILE_NAME = 'attachment-note.txt';
@@ -100,7 +97,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		// Without it, View Transitions (visual-refresh-design.md §11.1) freeze
 		// the OLD page's snapshot for the crossfade after each navigation and
 		// locators can pin an element from the outgoing page (e.g. getByLabel
-		// substring-matching a grid filter button right after goto /items/new).
+		// substring-matching a grid filter button right after goto /customers/new).
 		page = await browser.newPage({ reducedMotion: 'reduce' });
 	});
 
@@ -140,68 +137,48 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(page).toHaveURL(/\/dashboard$/);
 	});
 
-	test('3. items: create, appears in the grid, edit, delete', async () => {
-		await page.goto('/items');
+	test('3. customers: create, appears in the grid, edit, delete', async () => {
+		await page.goto('/customers');
 		await page.getByRole('button', { name: '新規作成' }).click();
-		await expect(page).toHaveURL(/\/items\/new$/);
+		await expect(page).toHaveURL(/\/customers\/new$/);
 
-		await page.getByLabel('商品名').fill(ITEM_NAME);
-		await page.getByLabel('価格').fill(String(ITEM_PRICE));
-		await page.getByLabel('在庫').fill(String(ITEM_STOCK));
+		await page.getByLabel('顧客コード').fill(CUSTOMER_CODE);
+		await page.getByLabel('顧客名').fill(CUSTOMER_NAME);
 		await page.getByRole('button', { name: '保存' }).click();
-		await expect(page).toHaveURL(/\/items$/);
+		await expect(page).toHaveURL(/\/customers$/);
 
-		// Server-mode grid, 1,000 seeded demo rows: filter by name (unique,
-		// timestamped) rather than scrolling/scanning for the new row.
-		await applyColumnFilter(page, '商品名', ITEM_NAME);
-		const row = rowWithText(page, ITEM_NAME);
+		// サーバーモードのグリッド。行を探して回るのではなく、実行ごとに
+		// 一意なコードで絞り込む。
+		await applyColumnFilter(page, '顧客コード', CUSTOMER_CODE);
+		const row = rowWithText(page, CUSTOMER_CODE);
 		await expect(row).toBeVisible();
 
 		const openLink = row.getByRole('link', { name: '開く' });
 		const href = await openLink.getAttribute('href');
-		expect(href).toMatch(/^\/items\/\d+$/);
-		const itemUrl = new RegExp(`${href}$`);
+		expect(href).toMatch(/^\/customers\/\d+$/);
+		const customerUrl = new RegExp(`${href}$`);
 
-		// Edit: change price, save, and independently re-open the record (by
-		// URL, not via the grid/filter again) to confirm the new value
-		// actually persisted server-side.
+		// 編集: 顧客名を変えて保存し、グリッド経由ではなく URL で開き直して
+		// サーバー側に本当に永続化されたことを確かめる。
 		await openLink.click();
-		await expect(page).toHaveURL(itemUrl);
-		await page.getByLabel('価格').fill(String(ITEM_PRICE_UPDATED));
+		await expect(page).toHaveURL(customerUrl);
+		await page.getByLabel('顧客名').fill(CUSTOMER_NAME_UPDATED);
 		await page.getByRole('button', { name: '保存' }).click();
-		await expect(page).toHaveURL(/\/items$/);
+		await expect(page).toHaveURL(/\/customers$/);
 
 		await page.goto(href!);
-		await expect(page.getByLabel('価格')).toHaveValue(String(ITEM_PRICE_UPDATED));
+		await expect(page.getByLabel('顧客名')).toHaveValue(CUSTOMER_NAME_UPDATED);
 
-		// Delete (window.confirm - accept it before triggering the click).
+		// 削除（window.confirm。クリック前に accept を仕込む）。
 		page.once('dialog', (dialog) => dialog.accept());
 		await page.getByRole('button', { name: '削除' }).click();
-		await expect(page).toHaveURL(/\/items$/);
+		await expect(page).toHaveURL(/\/customers$/);
 
 		await page.goto(href!);
-		await expect(page.getByText('商品が見つかりません')).toBeVisible();
+		await expect(page.getByText('顧客が見つかりません')).toBeVisible();
 	});
 
-	test('4. CSV export downloads a UTF-8-BOM CSV file', async () => {
-		await page.goto('/items');
-
-		const downloadPromise = page.waitForEvent('download');
-		await page.getByRole('button', { name: 'CSVエクスポート' }).click();
-		const download = await downloadPromise;
-
-		expect(download.suggestedFilename()).toMatch(/^items-\d{8}-\d{4}\.csv$/);
-		const filePath = await download.path();
-		expect(filePath).not.toBeNull();
-
-		// csvForExcel (packages/grid-svelte/src/core/csv.ts) prefixes a UTF-8
-		// BOM so Excel on Japanese Windows opens the file without mojibake -
-		// verify the actual downloaded bytes, not just the in-app helper.
-		const firstBytes = fs.readFileSync(filePath!).subarray(0, 3);
-		expect(Buffer.from(firstBytes)).toEqual(Buffer.from([0xef, 0xbb, 0xbf]));
-	});
-
-	test('5. user management: create a viewer account', async () => {
+	test('4. user management: create a viewer account', async () => {
 		await page.goto('/users');
 
 		// Scoped to the create form (not just page.getByLabel(...)): the
@@ -219,7 +196,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(rowWithText(page, VIEWER_USERNAME)).toBeVisible();
 	});
 
-	test('6. viewer role: no admin nav entries, no items create button', async () => {
+	test('5. viewer role: no admin nav entries, no create button', async () => {
 		await logout(page);
 		await expect(page).toHaveURL(/\/login$/);
 
@@ -233,20 +210,11 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(page.getByRole('link', { name: 'ユーザー管理' })).toHaveCount(0);
 		await expect(page.getByRole('link', { name: '監査ログ' })).toHaveCount(0);
 
-		await page.goto('/items');
+		await page.goto('/customers');
 		await expect(page.getByRole('button', { name: '新規作成' })).toHaveCount(0);
-
-		// M20 attachments (spec §3.1: "閲覧 = viewer 以上、追加/削除 = editor
-		// 以上"): open any seeded demo item (the grid always has 1,000 rows,
-		// so this doesn't depend on scenario 3's item, which is deleted by
-		// now) and confirm the panel renders read-only - no upload affordance.
-		await page.getByRole('link', { name: '開く' }).first().click();
-		await expect(page.getByRole('heading', { name: '添付ファイル' })).toBeVisible();
-		await expect(page.getByLabel('添付ファイルをアップロード')).toHaveCount(0);
-		await expect(page.getByRole('button', { name: 'アップロード' })).toHaveCount(0);
 	});
 
-	test('7. admin: audit log shows the login and items records', async () => {
+	test('6. admin: audit log shows the login and customers records', async () => {
 		await logout(page);
 		await expect(page).toHaveURL(/\/login$/);
 
@@ -265,26 +233,50 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		// Filters AND together, so the previous one must be cleared before a
 		// resource-only filter is applied, or nothing would match.
 		await clearColumnFilter(page, 'アクション');
-		await applyColumnFilter(page, 'リソース', 'items');
-		await expect(rowWithText(page, 'items').first()).toBeVisible();
+		await applyColumnFilter(page, 'リソース', 'customers');
+		await expect(rowWithText(page, 'customers').first()).toBeVisible();
 	});
 
-	test('8. items detail: attachments upload, thumbnail, file row, and delete', async () => {
-		await page.goto('/items');
-		await page.getByRole('button', { name: '新規作成' }).click();
-		await expect(page).toHaveURL(/\/items\/new$/);
-
-		await page.getByLabel('商品名').fill(ATTACHMENT_ITEM_NAME);
-		await page.getByLabel('価格').fill(String(ITEM_PRICE));
-		await page.getByLabel('在庫').fill(String(ITEM_STOCK));
+	test('7. 経費の詳細: 領収書のアップロード・サムネイル・行・削除', async () => {
+		// 経費は案件に、案件は顧客にぶら下がる（要件 F-E3）。まず1本作る。
+		await page.goto('/customers/new');
+		await page.getByLabel('顧客コード').fill(ATTACHMENT_CUSTOMER_CODE);
+		await page.getByLabel('顧客名').fill(CUSTOMER_NAME);
 		await page.getByRole('button', { name: '保存' }).click();
-		await expect(page).toHaveURL(/\/items$/);
+		await expect(page).toHaveURL(/\/customers$/);
 
-		await applyColumnFilter(page, '商品名', ATTACHMENT_ITEM_NAME);
-		const row = rowWithText(page, ATTACHMENT_ITEM_NAME);
-		await expect(row).toBeVisible();
-		const href = await row.getByRole('link', { name: '開く' }).getAttribute('href');
-		expect(href).toMatch(/^\/items\/\d+$/);
+		await applyColumnFilter(page, '顧客コード', ATTACHMENT_CUSTOMER_CODE);
+		const customerHref = await rowWithText(page, ATTACHMENT_CUSTOMER_CODE)
+			.getByRole('link', { name: '開く' })
+			.getAttribute('href');
+		const customerId = Number(customerHref!.split('/').pop());
+
+		await page.goto('/projects/new');
+		await page.getByLabel('顧客').fill(String(customerId));
+		await page.getByLabel('案件名').fill(ATTACHMENT_PROJECT_NAME);
+		await page.getByRole('button', { name: '保存' }).click();
+		await expect(page).toHaveURL(/\/projects$/);
+
+		await applyColumnFilter(page, '案件名', ATTACHMENT_PROJECT_NAME);
+		const projectHref = await rowWithText(page, ATTACHMENT_PROJECT_NAME)
+			.getByRole('link', { name: '開く' })
+			.getAttribute('href');
+		const projectId = Number(projectHref!.split('/').pop());
+
+		await page.goto('/expenses/new');
+		await page.getByLabel('案件').fill(String(projectId));
+		await page.getByLabel('支出日').fill('2026-08-20');
+		await page.getByLabel('分類').fill('TRANSPORT');
+		await page.getByLabel('支払先').fill(ATTACHMENT_EXPENSE_PAYEE);
+		await page.getByLabel('金額').fill('1200');
+		await page.getByRole('button', { name: '保存' }).click();
+		await expect(page).toHaveURL(/\/expenses$/);
+
+		await applyColumnFilter(page, '支払先', ATTACHMENT_EXPENSE_PAYEE);
+		const href = await rowWithText(page, ATTACHMENT_EXPENSE_PAYEE)
+			.getByRole('link', { name: '開く' })
+			.getAttribute('href');
+		expect(href).toMatch(/^\/expenses\/\d+$/);
 
 		await page.goto(href!);
 		await expect(page.getByRole('heading', { name: '添付ファイル' })).toBeVisible();
@@ -292,8 +284,8 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 
 		const uploadInput = page.getByLabel('添付ファイルをアップロード');
 
-		// 1. Upload a PNG image - it goes into the thumbnail grid as an <img>
-		// (AttachmentsPanel.svelte's `grouped.withThumbnail`).
+		// 1. 画像はサムネイルのグリッドに `<img>` として並ぶ
+		// （AttachmentsPanel.svelte の `grouped.withThumbnail`）。
 		await uploadInput.setInputFiles({
 			name: PNG_FILE_NAME,
 			mimeType: 'image/png',
@@ -301,9 +293,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		});
 		await expect(page.getByRole('img', { name: PNG_FILE_NAME, exact: true })).toBeVisible();
 
-		// 2. Upload a non-image file - it goes into the plain file-row list
-		// with its name and an extension badge (`fileTypeLabel`), not the
-		// thumbnail grid.
+		// 2. 画像以外はファイル行の一覧に、拡張子バッジ付きで並ぶ。
 		await uploadInput.setInputFiles({
 			name: TXT_FILE_NAME,
 			mimeType: 'text/plain',
@@ -313,25 +303,22 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(fileRow).toBeVisible();
 		await expect(fileRow.getByText('TXT', { exact: true })).toBeVisible();
 
-		// 3. Delete the text file first (confirm() - accept before the click,
-		// same discipline as scenario 3's item delete). Partial state: the
-		// file-row list empties out but the PNG thumbnail is still there.
+		// 3. テキストだけ消す。ファイル行は空になるがサムネイルは残る。
 		page.once('dialog', (dialog) => dialog.accept());
 		await fileRow.getByRole('button', { name: '削除' }).click();
 		await expect(fileRow).toHaveCount(0);
 		await expect(page.getByRole('img', { name: PNG_FILE_NAME, exact: true })).toBeVisible();
 
-		// 4. Delete the PNG too - the panel returns to its empty-state copy.
+		// 4. 画像も消すと空状態の文言へ戻る。
 		const thumbTile = page.locator('.thumb-tile').filter({ hasText: PNG_FILE_NAME });
 		page.once('dialog', (dialog) => dialog.accept());
 		await thumbTile.getByRole('button', { name: '削除' }).click();
 		await expect(page.getByText('添付ファイルはありません')).toBeVisible();
 
-		// 5. Re-upload one attachment and deliberately leave it in place: the
-		// cleanup step below deletes the item itself while it still owns an
-		// attachment, exercising the demo wiring's orphan cleanup
-		// (`delete_for_record("items", id)`, attachments-plan §3.8) rather than only ever
-		// deleting items with zero attachments.
+		// 5. もう1件アップロードして、**付けたまま経費ごと削除する**。
+		// 経費削除時の領収書の掃除（`expenses_delete_body` /
+		// `rest::expenses::expenses_delete`）を、添付ゼロの経費でしか
+		// 消さない形にしないため。
 		await uploadInput.setInputFiles({
 			name: PNG_FILE_NAME_2,
 			mimeType: 'image/png',
@@ -339,26 +326,24 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		});
 		await expect(page.getByRole('img', { name: PNG_FILE_NAME_2, exact: true })).toBeVisible();
 
-		// Cleanup: delete the scenario item (`.form-panel`-scoped - the
-		// attachment tile above has its own same-labelled "削除" button, so an
-		// unscoped getByRole would be ambiguous). Deleting an item that still
-		// has an attachment must not error.
+		// 後片付け（`.form-panel` で絞る - 添付タイル側にも同じ「削除」が
+		// あるので、絞らないと曖昧になる）。
 		page.once('dialog', (dialog) => dialog.accept());
 		await page.locator('.form-panel').getByRole('button', { name: '削除' }).click();
-		await expect(page).toHaveURL(/\/items$/);
+		await expect(page).toHaveURL(/\/expenses$/);
 
 		await page.goto(href!);
-		await expect(page.getByText('商品が見つかりません')).toBeVisible();
+		await expect(page.getByText('経費が見つかりません')).toBeVisible();
 	});
 
-	test('9. command palette: search and navigate to the audit log', async () => {
-		await page.goto('/items');
+	test('8. command palette: search and navigate to the audit log', async () => {
+		await page.goto('/customers');
 		// The Ctrl+K listener lives on (app)/+layout.svelte's `<svelte:window>`,
 		// which only mounts after the route guard's async work (bantoReady,
 		// sessionStore.load()) resolves - later than page.goto()'s "load"
 		// event. Wait for a page-specific element first so the keypress below
 		// isn't racing that mount.
-		await expect(page.getByRole('button', { name: 'CSVエクスポート' })).toBeVisible();
+		await expect(page.getByRole('button', { name: '新規作成' })).toBeVisible();
 
 		await page.keyboard.press('Control+K');
 		const search = page.getByPlaceholder('コマンドを検索…');
@@ -369,7 +354,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(page).toHaveURL(/\/audit-log$/);
 	});
 
-	test('10. settings: switching to the dark theme sets data-theme', async () => {
+	test('9. settings: switching to the dark theme sets data-theme', async () => {
 		await page.goto('/settings');
 
 		// Not .getByLabel(...).check(): the radio inputs here are visually
@@ -384,7 +369,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
 	});
 
-	test('11. backups: create a backup and see it in the list', async () => {
+	test('10. backups: create a backup and see it in the list', async () => {
 		await page.goto('/settings');
 
 		const backupRows = page.locator('.backup-list li');
@@ -394,34 +379,12 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(backupRows).toHaveCount(1);
 	});
 
-	// M19 report demo (docs/report-plan.md §3.6, docs/template-scope.md §3):
-	// items -> 日報 -> the report renders. Deliberately does NOT trigger
-	// window.print() (spec §3.6) - only confirms the template rendered real
-	// data, not the print dialog itself. Placed last: by this point
-	// scenarios 3 and 8 have each created then deleted exactly one item
-	// (net zero), so the grid is back to its 1,000-row seed baseline and
-	// the report's total-count string is deterministic.
-	test('12. items: 日報 report renders a heading, totals, and a category table', async () => {
-		await page.goto('/items');
-		await page.getByRole('button', { name: '日報' }).click();
-		await expect(page).toHaveURL(/\/items\/report$/);
-
-		await expect(page.getByRole('heading', { level: 1, name: /^日報/ })).toBeVisible();
-		await expect(page.getByText('1,000件')).toBeVisible();
-
-		// PRODUCT_BASES seeds exactly 12 categories (db.rs) and byCategory
-		// (dashboard.ts) never folds them, so the rendered category table has
-		// exactly 12 data rows.
-		const categoryRows = page.locator('.report-body table').first().locator('tbody tr');
-		await expect(categoryRows).toHaveCount(12);
-	});
-
 	// PR-B3 (i18n layer ②, ADR-0005): the settings
 	// language picker actually switches the whole UI locale. Deliberately LAST:
 	// Paraglide's setLocale() persists the choice to this shared page's
 	// localStorage and reloads every screen, so switching to English here can't
 	// disturb the Japanese-asserting scenarios above (which run first).
-	test('13. settings: the language picker switches the whole UI to English', async () => {
+	test('11. settings: the language picker switches the whole UI to English', async () => {
 		await page.goto('/settings');
 
 		// The <select> is still labelled in Japanese (表示言語) at this point. Its

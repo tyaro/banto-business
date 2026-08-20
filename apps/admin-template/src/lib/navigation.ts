@@ -20,7 +20,6 @@ export type NavIconKey =
 	| 'invoices'
 	| 'payments'
 	| 'issuer'
-	| 'items'
 	| 'tree'
 	| 'users'
 	| 'audit-log'
@@ -40,7 +39,6 @@ export type NavLabelKey =
 	| 'nav.invoices'
 	| 'nav.payments'
 	| 'nav.issuer'
-	| 'nav.items'
 	| 'nav.tree'
 	| 'nav.users'
 	| 'nav.auditLog'
@@ -71,7 +69,6 @@ export const navItems: NavItem[] = [
 	{ path: '/cost-rates', labelKey: 'nav.costRates', icon: 'cost-rates' },
 	// 事業者情報（適格請求書の発行者）は設定の一種で admin 限定。
 	{ path: '/issuer', labelKey: 'nav.issuer', icon: 'issuer', adminOnly: true },
-	{ path: '/items', labelKey: 'nav.items', icon: 'items' },
 	{ path: '/tree', labelKey: 'nav.tree', icon: 'tree' },
 	{ path: '/users', labelKey: 'nav.users', icon: 'users', adminOnly: true },
 	{ path: '/audit-log', labelKey: 'nav.auditLog', icon: 'audit-log', adminOnly: true },

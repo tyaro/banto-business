@@ -2,7 +2,7 @@
 	/**
 	 * 顧客一覧（docs/recipes/add-resource.md 手順8）。
 	 *
-	 * `items` のクライアント/サーバー両モード切り替えは持たず、**サーバー
+	 * クライアント/サーバー両モードの切り替えは持たず、**サーバー
 	 * モードのみ**にしている: 顧客・案件は「1万件のデモデータを手元で
 	 * ソートして見せる」性質のリソースではなく、DataProvider 側で
 	 * sort/filter/paging を解決する経路（spec §4.1/§4.2）だけで足りるため。
@@ -66,7 +66,7 @@
 		})
 	];
 
-	// spec M10 RBAC: viewer はインライン編集不可（items 一覧と同じ扱い）。
+	// spec M10 RBAC: viewer はインライン編集不可。
 	const columns = $derived(
 		canWrite
 			? baseColumns
@@ -74,7 +74,7 @@
 	);
 
 	// `columns` は $derived だが、GridState は生成時の列定義を保持して以降
-	// 自前で管理する（items 一覧と同じ扱い）。RBAC による editable の差は
+	// 自前で管理する。RBAC による editable の差は
 	// 生成時点で確定しているため、初期値の捕捉で問題ない。
 	// svelte-ignore state_referenced_locally
 	const gridState = new GridState<CustomerRow>(columns);

@@ -1,7 +1,7 @@
 <script lang="ts">
 	/**
 	 * customers の新規作成（docs/recipes/add-resource.md 手順8）。
-	 * `items/new` と同じ形: リソース定義のスキーマをそのまま `BantoForm` に
+	 * リソース定義のスキーマをそのまま `BantoForm` に
 	 * 渡し、保存は `createFormResource` 経由で DataProvider に投げる。
 	 */
 	import { goto } from '$app/navigation';

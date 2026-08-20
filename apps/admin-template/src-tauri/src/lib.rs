@@ -31,7 +31,6 @@ use admin_template_core::invoices::{
     CandidateLine, CandidateQuery, Invoice, InvoiceDetail, InvoiceInput, InvoicesService,
 };
 use admin_template_core::issuer::{IssuerInput, IssuerService, IssuerSettings};
-use admin_template_core::items::{ImportResult, Item, ItemImportRow, ItemInput, ItemsService};
 use admin_template_core::masters::{
     CostRateInput, CostRateValues, ExpenseCategory, MastersService, WorkCategory,
 };
@@ -64,10 +63,8 @@ use tokio::sync::{broadcast, Mutex as AsyncMutex};
 
 /// App-wide state managed by Tauri (spec §10, §11).
 struct AppState {
-    items: ItemsService,
     /// Business ドメイン（Phase 2 基本マスター、docs/domain/schema.md §2）。
-    /// `items` と同じく、変更は `events` に流れて webview と LAN ブラウザの
-    /// 両方へ配信される。
+    /// 変更は `events` に流れて webview と LAN ブラウザの両方へ配信される。
     customers: CustomersService,
     projects: ProjectsService,
     /// Phase 3（工数・経費）。Trip の一括生成は work_logs / expenses も
@@ -103,7 +100,7 @@ struct AppState {
     /// (spec §11.2/§11.4's enabled/bind/port).
     settings: SettingsService,
     /// App-wide resource-change/notice broadcast (spec §3.5): every
-    /// `ItemsService` mutation feeds this, and it is fanned out two ways -
+    /// service mutation feeds this, and it is fanned out two ways -
     /// to the webview via the `banto://event` forwarding task spawned in
     /// `setup()`, and (only while the embedded server is running) to LAN
     /// browser clients via `GET /api/events` (`banto_server::sse_route`).
@@ -129,13 +126,13 @@ struct AppState {
     /// desktop counterpart to REST's `record_write`, conventions §1); the few
     /// whose shape differs (import's `ok`/`failed`, `login_failed`, the
     /// escape-hatch config write, the startup `restore_applied`) build their
-    /// entry by hand. Shares the same pool as `items`/`users`/`settings` (all
-    /// four are `Clone` handles onto the one on-disk SQLite DB, see `run()`'s
-    /// `setup()`).
+    /// entry by hand. Shares the same pool as the domain services/`users`/
+    /// `settings` (all are `Clone` handles onto the one on-disk SQLite DB,
+    /// see `run()`'s `setup()`).
     audit: AuditLogService,
     /// Backup/restore (spec M17): `VACUUM INTO` snapshots into `backups/`
     /// next to the DB file, plus the restore staging flow. Shares the same
-    /// pool as `items`/`users`/`settings`/`audit` - only its `db_path` is
+    /// pool as the domain services/`users`/`settings`/`audit` - only its `db_path` is
     /// unique to this service (needed to resolve `backups/` and
     /// `restore-pending.sqlite3`'s location, see `crate::backup`'s doc
     /// comment).
@@ -143,7 +140,7 @@ struct AppState {
     /// File/image attachments (spec `docs/attachments-plan.md` §3, M20 unit
     /// B): `banto_attachments::AttachmentsService` has no `tauri`/
     /// `ServerEvent` awareness by design (see that crate's module doc
-    /// comment), so - unlike `items`, which broadcasts its own
+    /// comment), so - unlike the domain services, which broadcast their own
     /// `ResourceChanged` internally - the `attachments_upload`/
     /// `attachments_delete` commands below broadcast on `events` themselves,
     /// mirroring `admin_template_core::rest`'s attachments handlers.
@@ -154,13 +151,6 @@ struct AppState {
     /// `AttachmentsService` (unlike `BackupService::backups_dir_display`)
     /// exposes no accessor for its own `base_dir`.
     attachments_dir: PathBuf,
-    /// `exports/` directory (sibling of `attachments/`/`backups/` under the
-    /// app's data dir) - the desktop counterpart of the LAN browser's
-    /// `<a download>` CSV export (finding⑤ Option A): `items_export_csv_to_folder`
-    /// writes the exported file here and reveals it in the OS file explorer,
-    /// same "no native save dialog in v1" fallback as
-    /// `backups_open_folder`/`attachments_open_folder`.
-    exports_dir: PathBuf,
     /// System diagnostics probe (M-review 2026-08 §2.4), backing the admin
     /// `system_info` command and its symmetric `GET /api/system/info` route.
     /// DB-only (dialect/latency/migration version/attachment size); the
@@ -268,8 +258,8 @@ async fn require_role(
 /// `"tauri"` and `result` always `"ok"`.
 ///
 /// The handlers whose entry does not fit this shape build their `AuditEntry`
-/// by hand, exactly as their REST counterparts do: [`items_import_body`]'s
-/// `ok`/`failed` result, [`auth_login`]'s `login_failed` (no [`UserIdentity`],
+/// by hand, exactly as their REST counterparts do: [`auth_login`]'s
+/// `login_failed` (no [`UserIdentity`],
 /// `result: "failed"`), [`auth_config_apply`]'s escape hatch (actor may be
 /// absent), the `denied` entry in [`require_role`] itself, and the startup
 /// `restore_applied` (no caller identity exists yet).
@@ -502,15 +492,40 @@ async fn expenses_update(
 
 #[tauri::command]
 async fn expenses_delete(state: State<'_, AppState>, id: i64) -> Result<(), BantoError> {
-    let actor = require_role(&state, Role::Editor, "expenses").await?;
+    expenses_delete_body(&state, id).await
+}
+
+/// [`expenses_delete`] の本体。`tauri::State` はアプリ本体を起動しないと
+/// 作れないので、認可・領収書の掃除・監査の振る舞いを `&AppState` だけで
+/// テストできるように分けてある（spec M14 のパターン）。
+async fn expenses_delete_body(state: &AppState, id: i64) -> Result<(), BantoError> {
+    let actor = require_role(state, Role::Editor, "expenses").await?;
     state.expenses.delete(id).await?;
+    // 消した経費に紐づいたままの領収書（要件 F-E3）を片付ける。best-effort:
+    // 経費の削除は既に成功しているので、ここでの失敗をコマンドのエラーには
+    // しない（REST 側 `rest::expenses::expenses_delete` と同じ扱い）。
+    let attachments_removed = match state
+        .attachments
+        .delete_for_record("expenses", &id.to_string())
+        .await
+    {
+        Ok(count) => count,
+        Err(err) => {
+            eprintln!(
+                "banto: 経費 {id} の領収書削除に失敗しました（経費自体の削除は完了済み）: {err}"
+            );
+            0
+        }
+    };
+    let detail = (attachments_removed > 0)
+        .then(|| serde_json::json!({ "attachmentsRemoved": attachments_removed }));
     record_ok(
         &state.audit,
         &actor,
         "delete",
         "expenses",
         Some(&id.to_string()),
-        None,
+        detail,
     )
     .await;
     Ok(())
@@ -1020,157 +1035,6 @@ async fn projects_delete(state: State<'_, AppState>, id: i64) -> Result<(), Bant
     Ok(())
 }
 
-#[tauri::command]
-async fn items_list(
-    state: State<'_, AppState>,
-    params: ListParams,
-) -> Result<ListResult<Item>, BantoError> {
-    require_role(&state, Role::Viewer, "items").await?;
-    state.items.list(params).await
-}
-
-#[tauri::command]
-async fn items_get(state: State<'_, AppState>, id: i64) -> Result<Item, BantoError> {
-    require_role(&state, Role::Viewer, "items").await?;
-    state.items.get(id).await
-}
-
-#[tauri::command]
-async fn items_create(state: State<'_, AppState>, values: ItemInput) -> Result<Item, BantoError> {
-    let actor = require_role(&state, Role::Editor, "items").await?;
-    let item = state.items.create(values).await?;
-    record_ok(
-        &state.audit,
-        &actor,
-        "create",
-        "items",
-        Some(&item.id.to_string()),
-        Some(serde_json::json!({ "name": item.name })),
-    )
-    .await;
-    Ok(item)
-}
-
-#[tauri::command]
-async fn items_update(
-    state: State<'_, AppState>,
-    id: i64,
-    values: ItemInput,
-) -> Result<Item, BantoError> {
-    let actor = require_role(&state, Role::Editor, "items").await?;
-    let item = state.items.update(id, values).await?;
-    record_ok(
-        &state.audit,
-        &actor,
-        "update",
-        "items",
-        Some(&item.id.to_string()),
-        Some(serde_json::json!({ "name": item.name })),
-    )
-    .await;
-    Ok(item)
-}
-
-/// Body of [`items_delete`], split out (spec M14 pattern, see
-/// [`items_import_body`]) so its authz + attachment-sweep + audit behavior is
-/// testable with a plain `&AppState` in this crate's own `cargo test`.
-async fn items_delete_body(state: &AppState, id: i64) -> Result<(), BantoError> {
-    let actor = require_role(state, Role::Editor, "items").await?;
-    state.items.delete(id).await?;
-    // M20 unit C demo wiring (spec docs/attachments-plan.md §3.8): sweep up
-    // any attachments left pointing at the now-deleted record. Best-effort,
-    // same reasoning as the REST handler (admin-template-core's
-    // `rest.rs::items_delete`) - a storage hiccup here must not turn an
-    // already-successful item delete into a command error.
-    let attachments_removed = match state
-        .attachments
-        .delete_for_record("items", &id.to_string())
-        .await
-    {
-        Ok(count) => count,
-        Err(err) => {
-            eprintln!(
-                "banto: item {id} の添付ファイル削除に失敗しました（item自体の削除は完了済み）: {err}"
-            );
-            0
-        }
-    };
-    let detail = (attachments_removed > 0)
-        .then(|| serde_json::json!({ "attachmentsRemoved": attachments_removed }));
-    record_ok(
-        &state.audit,
-        &actor,
-        "delete",
-        "items",
-        Some(&id.to_string()),
-        detail,
-    )
-    .await;
-    Ok(())
-}
-
-#[tauri::command]
-async fn items_delete(state: State<'_, AppState>, id: i64) -> Result<(), BantoError> {
-    items_delete_body(&state, id).await
-}
-
-/// Body of [`items_import`], split out the same way [`change_own_password`]
-/// is (spec M14 pattern) so the audit-recording behavior is testable with a
-/// plain `&AppState` in this crate's own `cargo test` - `tauri::State`
-/// cannot be constructed outside a running tauri app, but it derefs to
-/// `&AppState`, so the command below is a one-line adapter.
-///
-/// Unlike `items_create`/`update`/`delete` above, [`ItemsService::import`]
-/// itself never fails on bad ROW data - an all-or-nothing rollback comes
-/// back as `Ok(ImportResult)` with `errors` populated (spec M15 design
-/// decision, see that method's doc comment) - so this always records
-/// exactly one `action: "import"` entry: `result: "ok"` with a
-/// `{created,updated}` summary when `errors` is empty, `result: "failed"`
-/// with an `{errorCount}` summary when the batch was rolled back. It only
-/// skips the write the way every other command here does: when the service
-/// call returns `Err` outright (e.g. the row-count limit), which `?`
-/// propagates before this function's audit code runs.
-async fn items_import_body(
-    state: &AppState,
-    rows: Vec<ItemImportRow>,
-) -> Result<ImportResult, BantoError> {
-    let actor = require_role(state, Role::Editor, "items").await?;
-    let result = state.items.import(rows).await?;
-    let (result_tag, detail) = if result.errors.is_empty() {
-        (
-            "ok",
-            serde_json::json!({ "created": result.created, "updated": result.updated }),
-        )
-    } else {
-        (
-            "failed",
-            serde_json::json!({ "errorCount": result.errors.len() }),
-        )
-    };
-    state
-        .audit
-        .record(AuditEntry {
-            actor_username: Some(&actor.username),
-            actor_role: Some(actor.role.as_str()),
-            action: "import",
-            resource: "items",
-            entity_id: None,
-            detail: Some(detail),
-            origin: "tauri",
-            result: result_tag,
-        })
-        .await;
-    Ok(result)
-}
-
-#[tauri::command]
-async fn items_import(
-    state: State<'_, AppState>,
-    rows: Vec<ItemImportRow>,
-) -> Result<ImportResult, BantoError> {
-    items_import_body(&state, rows).await
-}
-
 /// `GET`-ish command: has an account been created yet (spec §3.3/§8.2)? The
 /// login page calls this first to decide between the first-run setup form
 /// and the normal login form.
@@ -1584,7 +1448,6 @@ fn build_status(config: &ServerSettings, running: bool) -> ServerStatusResult {
 // `Services` through this wrapper too would only add an assembly hop.
 #[allow(clippy::too_many_arguments)]
 async fn start_embedded_server(
-    items: ItemsService,
     customers: CustomersService,
     projects: ProjectsService,
     masters: MastersService,
@@ -1613,7 +1476,6 @@ async fn start_embedded_server(
     // same as `banto-serve.rs`'s equivalent composition, so every response
     // this embedded server produces carries the baseline security headers.
     let services = Services {
-        items,
         customers,
         projects,
         masters,
@@ -1699,7 +1561,6 @@ async fn server_apply(
     let started = if config.enabled {
         Some(
             start_embedded_server(
-                state.items.clone(),
                 state.customers.clone(),
                 state.projects.clone(),
                 state.masters.clone(),
@@ -2130,8 +1991,8 @@ async fn audit_config_apply(
 
 // --- M17: SQLite backup/restore ---------------------------------------------
 
-/// Body of [`backups_create`], split out the same way [`change_own_password`]/
-/// [`items_import_body`] are (spec M14 pattern) so the audit-recording
+/// Body of [`backups_create`], split out the same way
+/// [`change_own_password`] is (spec M14 pattern) so the audit-recording
 /// behavior is testable with a plain `&AppState` in this crate's own `cargo
 /// test` - `tauri::State` cannot be constructed outside a running tauri app.
 async fn backups_create_body(state: &AppState) -> Result<BackupInfo, BantoError> {
@@ -2532,61 +2393,6 @@ async fn attachments_open_folder(
     }
 }
 
-/// `viewer`+ (items list is Viewer-readable): write an exported CSV to the
-/// app's `exports/` dir and open that folder in the OS file explorer - the desktop
-/// counterpart of the LAN browser's `<a download>` (the same "no native save
-/// dialog in v1" fallback `backups_open_folder`/`attachments_open_folder`
-/// use). The CSV bytes are already client-visible data (the caller can see
-/// the list), so this opens no new authz surface and is not audited, matching
-/// the browser download. **Windows-only** reveal by design (see
-/// `backups_open_folder`); non-Windows returns `opened:false`, not an error.
-#[tauri::command]
-async fn items_export_csv_to_folder(
-    state: State<'_, AppState>,
-    content: String,
-    file_name: String,
-) -> Result<OpenFolderResult, BantoError> {
-    require_role(&state, Role::Viewer, "items").await?;
-    // Sanitize: use ONLY the final path component, reject empty/traversal.
-    let safe = std::path::Path::new(&file_name)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| BantoError::Other("invalid file name".into()))?;
-    // Self-heal: recreate `exports/` if it was removed since startup (user
-    // deleted it, or a data dir predating this feature) so a missing folder
-    // never silently drops the export - the "folder-missing fallback".
-    std::fs::create_dir_all(&state.exports_dir).map_err(|e| BantoError::Other(e.to_string()))?;
-    let file_path = state.exports_dir.join(safe);
-    std::fs::write(&file_path, content.as_bytes()).map_err(|e| BantoError::Other(e.to_string()))?;
-    let path = file_path.display().to_string();
-
-    #[cfg(target_os = "windows")]
-    {
-        // Open the `exports/` folder in Explorer - the SAME invocation as
-        // `backups_open_folder`/`attachments_open_folder` (a single
-        // directory arg). `explorer /select,<file>` to reveal the file
-        // pre-selected is unreliable here: Explorer's non-standard comma/space
-        // command-line parsing (std's arg quoting splits `/select,` and the
-        // path into two tokens) makes it pop a spurious "location unavailable"
-        // dialog even when the file was written fine. `path` (the file) is
-        // still returned for the non-Windows fallback message.
-        let opened = std::process::Command::new("explorer")
-            .arg(&state.exports_dir)
-            .spawn()
-            .is_ok();
-        Ok(OpenFolderResult { opened, path })
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        Ok(OpenFolderResult {
-            opened: false,
-            path,
-        })
-    }
-}
-
 /// Pop a dock panel out into a REAL native window (spec §5.3 v2 - the
 /// "ウィンドウ分離" mode the v1 doc comment left as a future extension
 /// point). Thin by design: this is the ONLY Tauri-aware half of the pop-out
@@ -2678,7 +2484,6 @@ pub fn run() {
                 tauri::async_runtime::block_on(init_db(&db_path)).expect("init_db should succeed");
 
             let events = event_channel();
-            let items = ItemsService::new(db.clone()).with_events(events.clone());
             let customers = CustomersService::new(db.clone()).with_events(events.clone());
             let projects = ProjectsService::new(db.clone()).with_events(events.clone());
             let masters = MastersService::new(db.clone()).with_events(events.clone());
@@ -2699,10 +2504,6 @@ pub fn run() {
             // DB file inside the app's own data directory.
             let attachments_dir = data_dir.join("attachments");
             let attachments = AttachmentsService::new(db.clone(), attachments_dir.clone());
-            // Desktop CSV export (finding⑤ Option A): same sibling-directory
-            // convention as `attachments/`/`backups/` above.
-            let exports_dir = data_dir.join("exports");
-            std::fs::create_dir_all(&exports_dir).expect("create exports dir");
             // System diagnostics probe (M-review 2026-08 §2.4). Built before
             // `audit` moves `db`, same as the other services above.
             let system_info = SystemInfoService::new(db.clone());
@@ -2900,7 +2701,6 @@ pub fn run() {
                     port: server_config.port,
                 };
                 match tauri::async_runtime::block_on(start_embedded_server(
-                    items.clone(),
                     customers.clone(),
                     projects.clone(),
                     masters.clone(),
@@ -2971,7 +2771,6 @@ pub fn run() {
             }
 
             app.manage(AppState {
-                items,
                 customers,
                 projects,
                 masters,
@@ -2992,7 +2791,6 @@ pub fn run() {
                 backup,
                 attachments,
                 attachments_dir,
-                exports_dir,
                 system_info,
                 started_at,
             });
@@ -3001,13 +2799,6 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             ping,
-            items_list,
-            items_get,
-            items_create,
-            items_update,
-            items_delete,
-            items_import,
-            items_export_csv_to_folder,
             customers_list,
             customers_get,
             customers_create,
@@ -3115,7 +2906,6 @@ mod tests {
             .expect("init_db_memory");
         let events = event_channel();
         AppState {
-            items: ItemsService::new(pool.clone()).with_events(events.clone()),
             customers: CustomersService::new(pool.clone()).with_events(events.clone()),
             projects: ProjectsService::new(pool.clone()).with_events(events.clone()),
             masters: MastersService::new(pool.clone()).with_events(events.clone()),
@@ -3145,7 +2935,6 @@ mod tests {
                 PathBuf::from("unused-in-tests").join("attachments"),
             ),
             attachments_dir: PathBuf::from("unused-in-tests").join("attachments"),
-            exports_dir: PathBuf::from("unused-in-tests").join("exports"),
             started_at: std::time::Instant::now(),
         }
     }
@@ -3165,7 +2954,6 @@ mod tests {
             .expect("init_db");
         let events = event_channel();
         let state = AppState {
-            items: ItemsService::new(pool.clone()).with_events(events.clone()),
             customers: CustomersService::new(pool.clone()).with_events(events.clone()),
             projects: ProjectsService::new(pool.clone()).with_events(events.clone()),
             masters: MastersService::new(pool.clone()).with_events(events.clone()),
@@ -3189,7 +2977,6 @@ mod tests {
             system_info: SystemInfoService::new(pool.clone()),
             attachments: AttachmentsService::new(pool, dir.path().join("attachments")),
             attachments_dir: dir.path().join("attachments"),
-            exports_dir: dir.path().join("exports"),
             started_at: std::time::Instant::now(),
         };
         (state, dir)
@@ -3264,185 +3051,6 @@ mod tests {
     }
 
     // --- M15: CSV import -----------------------------------------------------
-
-    /// `editor` can import; a mixed create+update batch succeeds and is
-    /// recorded as exactly ONE `action: "import"` audit entry (spec M15:
-    /// "件数サマリ付き1件記録"), with a `{created,updated}` summary detail
-    /// and no `entityId`.
-    #[tokio::test]
-    async fn items_import_records_one_audit_entry_on_success() {
-        let state = app_state().await;
-        let editor = state
-            .users
-            .create_user("editor", "password123", "編集者", Role::Editor)
-            .await
-            .expect("create_user");
-        *state.auth.lock().expect("auth mutex poisoned") = Some(editor);
-
-        let existing = state
-            .items
-            .create(ItemInput {
-                name: "Existing".to_string(),
-                price: 10,
-                stock: 1,
-            })
-            .await
-            .expect("seed create");
-
-        let result = items_import_body(
-            &state,
-            vec![
-                ItemImportRow {
-                    id: Some(existing.id),
-                    name: "Updated".to_string(),
-                    price: 20,
-                    stock: 2,
-                },
-                ItemImportRow {
-                    id: None,
-                    name: "Brand New".to_string(),
-                    price: 30,
-                    stock: 3,
-                },
-            ],
-        )
-        .await
-        .expect("items_import_body should succeed");
-        assert_eq!(result.created, 1);
-        assert_eq!(result.updated, 1);
-        assert!(result.errors.is_empty());
-
-        let audit = state
-            .audit
-            .list(ListParams::default())
-            .await
-            .expect("audit list");
-        let entries: Vec<_> = audit.rows.iter().filter(|r| r.action == "import").collect();
-        assert_eq!(
-            entries.len(),
-            1,
-            "expected exactly one import entry, got {:?}",
-            audit.rows
-        );
-        let entry = entries[0];
-        assert_eq!(entry.actor_username.as_deref(), Some("editor"));
-        assert_eq!(entry.actor_role.as_deref(), Some("editor"));
-        assert_eq!(entry.resource, "items");
-        assert_eq!(entry.entity_id, None);
-        assert_eq!(entry.origin, "tauri");
-        assert_eq!(entry.result, "ok");
-        let detail: serde_json::Value =
-            serde_json::from_str(entry.detail.as_deref().expect("detail should be set")).unwrap();
-        assert_eq!(detail, serde_json::json!({ "created": 1, "updated": 1 }));
-    }
-
-    /// A per-row validation error rolls the whole batch back - including the
-    /// otherwise-valid row in the same batch - and is recorded as a single
-    /// `result: "failed"` entry summarizing the error count (spec M15).
-    #[tokio::test]
-    async fn items_import_validation_error_rolls_back_and_is_recorded_as_failed() {
-        let state = app_state().await;
-        let editor = state
-            .users
-            .create_user("editor", "password123", "編集者", Role::Editor)
-            .await
-            .expect("create_user");
-        *state.auth.lock().expect("auth mutex poisoned") = Some(editor);
-
-        // `app_state()` is backed by `init_db_memory` (spec §12), which
-        // seeds 1,000 demo rows - capture that baseline rather than
-        // asserting an absolute `0` below, since this test cares about "did
-        // the import add anything", not "is the table empty".
-        let before = state
-            .items
-            .list(ListParams::default())
-            .await
-            .expect("list")
-            .total_count;
-
-        let result = items_import_body(
-            &state,
-            vec![
-                ItemImportRow {
-                    id: None,
-                    name: "Valid".to_string(),
-                    price: 10,
-                    stock: 1,
-                },
-                ItemImportRow {
-                    id: None,
-                    name: "".to_string(), // fails validation
-                    price: 1,
-                    stock: 1,
-                },
-            ],
-        )
-        .await
-        .expect("items_import_body should return Ok with row errors, not Err");
-        assert_eq!(result.created, 0);
-        assert_eq!(result.updated, 0);
-        assert_eq!(result.errors.len(), 1);
-
-        let list = state.items.list(ListParams::default()).await.expect("list");
-        assert_eq!(
-            list.total_count, before,
-            "a rolled-back import must not leave partial rows"
-        );
-
-        let audit = state
-            .audit
-            .list(ListParams::default())
-            .await
-            .expect("audit list");
-        let entry = audit
-            .rows
-            .iter()
-            .find(|r| r.action == "import")
-            .unwrap_or_else(|| panic!("expected an import entry, got {:?}", audit.rows));
-        assert_eq!(entry.result, "failed");
-        assert_eq!(entry.actor_username.as_deref(), Some("editor"));
-        let detail: serde_json::Value =
-            serde_json::from_str(entry.detail.as_deref().expect("detail should be set")).unwrap();
-        assert_eq!(detail, serde_json::json!({ "errorCount": 1 }));
-    }
-
-    /// `viewer` cannot import (spec M15: editor+ only, same `require_role`
-    /// floor as `items_create`/`update`/`delete`).
-    #[tokio::test]
-    async fn viewer_cannot_import_items() {
-        let state = app_state().await;
-        let viewer = state
-            .users
-            .create_user("viewer", "password123", "閲覧者", Role::Viewer)
-            .await
-            .expect("create_user");
-        *state.auth.lock().expect("auth mutex poisoned") = Some(viewer);
-        let before = state
-            .items
-            .list(ListParams::default())
-            .await
-            .expect("list")
-            .total_count;
-
-        let err = items_import_body(
-            &state,
-            vec![ItemImportRow {
-                id: None,
-                name: "Nope".to_string(),
-                price: 1,
-                stock: 1,
-            }],
-        )
-        .await
-        .unwrap_err();
-        assert!(matches!(err, BantoError::Forbidden));
-
-        let list = state.items.list(ListParams::default()).await.expect("list");
-        assert_eq!(
-            list.total_count, before,
-            "a forbidden import must not touch the table"
-        );
-    }
 
     // --- M17: SQLite backup/restore -------------------------------------------
 
@@ -3559,53 +3167,6 @@ mod tests {
             "expected a restore_cancelled entry, got {:?}",
             audit_after_cancel.rows
         );
-    }
-
-    /// [`items_delete_body`] records one `delete`/`items` entry; with no
-    /// attachments swept for the record, `detail` is `None` (M-review 2026-08
-    /// M-5).
-    #[tokio::test]
-    async fn items_delete_is_recorded_as_delete() {
-        let state = app_state().await;
-        let editor = state
-            .users
-            .create_user("editor", "password123", "編集者", Role::Editor)
-            .await
-            .expect("create_user");
-        *state.auth.lock().expect("auth mutex poisoned") = Some(editor);
-        let item = state
-            .items
-            .create(ItemInput {
-                name: "Doomed".to_string(),
-                price: 1,
-                stock: 1,
-            })
-            .await
-            .expect("seed item");
-
-        items_delete_body(&state, item.id)
-            .await
-            .expect("delete should succeed");
-
-        let audit = state
-            .audit
-            .list(ListParams::default())
-            .await
-            .expect("audit list");
-        let entry = audit
-            .rows
-            .iter()
-            .find(|r| r.action == "delete" && r.resource == "items")
-            .unwrap_or_else(|| panic!("expected a delete/items entry, got {:?}", audit.rows));
-        assert_eq!(entry.actor_username.as_deref(), Some("editor"));
-        assert_eq!(entry.actor_role.as_deref(), Some("editor"));
-        assert_eq!(
-            entry.entity_id.as_deref(),
-            Some(item.id.to_string().as_str())
-        );
-        assert_eq!(entry.origin, "tauri");
-        assert_eq!(entry.result, "ok");
-        assert_eq!(entry.detail, None, "no attachments removed -> detail None");
     }
 
     /// [`auth_config_apply_body`]'s normal (non-escape-hatch) path records a
@@ -3747,7 +3308,7 @@ mod tests {
 
         let meta = attachments_upload_body(
             &state,
-            "items".to_string(),
+            "customers".to_string(),
             "1".to_string(),
             "note.txt".to_string(),
             b"hello attachment".to_vec(),
@@ -3780,7 +3341,7 @@ mod tests {
             serde_json::json!({
                 "fileName": "note.txt",
                 "sizeBytes": 16,
-                "parentResource": "items",
+                "parentResource": "customers",
                 "parentId": "1"
             })
         );
@@ -3801,7 +3362,7 @@ mod tests {
         *state.auth.lock().expect("auth mutex poisoned") = Some(editor);
         let meta = attachments_upload_body(
             &state,
-            "items".to_string(),
+            "customers".to_string(),
             "1".to_string(),
             "note.txt".to_string(),
             b"hello attachment".to_vec(),
@@ -3836,10 +3397,111 @@ mod tests {
             serde_json::json!({
                 "fileName": "note.txt",
                 "sizeBytes": 16,
-                "parentResource": "items",
+                "parentResource": "customers",
                 "parentId": "1"
             })
         );
     }
+    /// 経費を消したら、その経費に付いていた領収書（要件 F-E3）も一緒に消える。
+    /// 監査の `detail` には掃除した件数が入る。ここが漏れると、参照先の無い
+    /// 添付ファイルがディスクに残り続ける。
+    #[tokio::test]
+    async fn deleting_an_expense_sweeps_its_attachments_and_records_the_count() {
+        let (state, _dir) = app_state_with_tempdir().await;
+        let editor = state
+            .users
+            .create_user("editor", "password123", "編集者", Role::Editor)
+            .await
+            .expect("create_user");
+        *state.auth.lock().expect("auth mutex poisoned") = Some(editor);
+
+        let customer = state
+            .customers
+            .create(admin_template_core::customers::CustomerInput {
+                code: "C001".to_string(),
+                name: "架空商事".to_string(),
+                contact_person: None,
+                address: None,
+                phone: None,
+                email: None,
+                billing_name: None,
+                closing_day: 99,
+                payment_month_offset: 1,
+                payment_day: 99,
+                note: None,
+            })
+            .await
+            .expect("seed customer");
+        let project = state
+            .projects
+            .create(ProjectInput {
+                code: String::new(),
+                customer_id: customer.id,
+                name: "架空案件".to_string(),
+                status: "ORDERED".to_string(),
+                started_on: None,
+                due_on: None,
+                estimate_amount: None,
+                contract_amount: None,
+                billing_hourly_rate: None,
+                scope: None,
+                note: None,
+            })
+            .await
+            .expect("seed project");
+        let expense = state
+            .expenses
+            .create(ExpenseInput {
+                project_id: project.id,
+                trip_id: None,
+                spent_on: "2026-08-20".to_string(),
+                expense_category_code: "TRANSPORT".to_string(),
+                payee: None,
+                amount: 1_200,
+                tax_category: None,
+                description: None,
+                billable: true,
+                invoiced: false,
+            })
+            .await
+            .expect("seed expense");
+
+        attachments_upload_body(
+            &state,
+            "expenses".to_string(),
+            expense.id.to_string(),
+            "receipt.txt".to_string(),
+            b"e2e receipt".to_vec(),
+        )
+        .await
+        .expect("seed attachment");
+
+        expenses_delete_body(&state, expense.id)
+            .await
+            .expect("delete should succeed");
+
+        let left = state
+            .attachments
+            .list_for_record("expenses", &expense.id.to_string())
+            .await
+            .expect("attachments list");
+        assert!(left.is_empty(), "領収書が残ってはいけない: {left:?}");
+
+        let audit = state
+            .audit
+            .list(ListParams::default())
+            .await
+            .expect("audit list");
+        let entry = audit
+            .rows
+            .iter()
+            .find(|r| r.action == "delete" && r.resource == "expenses")
+            .unwrap_or_else(|| panic!("expected a delete/expenses entry, got {:?}", audit.rows));
+        let detail: serde_json::Value =
+            serde_json::from_str(entry.detail.as_deref().expect("detail present"))
+                .expect("detail is json");
+        assert_eq!(detail, serde_json::json!({ "attachmentsRemoved": 1 }));
+    }
+
     // --- end M20 attachments command tests ---------------------------------
 }

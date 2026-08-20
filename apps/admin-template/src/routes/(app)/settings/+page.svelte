@@ -1520,7 +1520,7 @@
 	}
 
 	/* Visually hidden but still focusable/clickable via
-	   restoreFileInput?.click() - same approach as the items page's CSVイン
+	   restoreFileInput?.click() - same approach as the CSVイン
 	   ポート file input (spec M15). */
 	.file-input {
 		position: absolute;

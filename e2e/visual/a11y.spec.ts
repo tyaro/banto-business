@@ -4,7 +4,7 @@
  * browser demo mode) and theme-priming helpers as visual.spec.ts, but
  * asserting on `axe-core` violations instead of pixels.
  *
- * Scope: dashboard / items / settings / login, each scanned once per the
+ * Scope: dashboard / customers / settings / login, each scanned once per the
  * diagonal matrix (light/standard, dark/glass) - contrast is theme-
  * dependent, so both ends of the matrix must be checked; wcag2a/wcag2aa
  * violations that are NOT contrast (roles, labels, ...) are theme-
@@ -25,7 +25,7 @@ interface ScannedPage {
 
 const PAGES: ScannedPage[] = [
 	{ name: 'dashboard', path: '/dashboard', heading: 'ダッシュボード', authed: true },
-	{ name: 'items', path: '/items', heading: '商品', authed: true },
+	{ name: 'customers', path: '/customers', heading: '顧客', authed: true },
 	{ name: 'settings', path: '/settings', heading: '設定', authed: true },
 	{ name: 'login', path: '/login', heading: 'Banto Business', authed: false }
 ];

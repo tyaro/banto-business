@@ -28,8 +28,8 @@
  * Layout (improvement-plan-2026-07.md P3-4) - this file stays the app's one
  * public entry point (everything below is re-exported here), but the parts
  * an app author actually edits live in their own files:
- * - `resources/items.ts` + `resources/index.ts` — resource definitions and
- *   registration (**the files you replace**, docs/recipes/add-resource.md)
+ * - `resources/*.ts` + `resources/index.ts` — resource definitions and
+ *   registration (docs/recipes/add-resource.md)
  * - `environment.ts` — isTauri / isEmbeddedServer / CSRF_HEADER detection
  * - `providers/demo.ts` — the demo-mode AuthProvider
  */
@@ -55,7 +55,6 @@ import { toastStore } from '$lib/toast.svelte';
 import { CSRF_HEADER, isEmbeddedServer, isTauri } from './environment';
 import { demoAuthProvider } from './providers/demo';
 import { resources } from './resources';
-import { sampleItems } from './sampleData';
 
 // Re-exported so the rest of the app keeps importing from './setup' (one
 // public entry point; the split into environment.ts is an internal detail).
@@ -133,7 +132,9 @@ export const bantoReady: Promise<void> = (async () => {
 	// Plain `vite dev`/`vite preview`: no Banto backend at all, no EventProvider.
 	bantoMode = 'demo';
 	initBanto({
-		dataProvider: createInMemoryDataProvider({ items: { rows: sampleItems } }),
+		// 業務データを持たない素のブラウザ実行。空のインメモリ DB で起動する
+		// （`items` デモを削除したので、投入するサンプル行が無い）。
+		dataProvider: createInMemoryDataProvider({}),
 		authProvider: demoAuthProvider,
 		notifier,
 		resources

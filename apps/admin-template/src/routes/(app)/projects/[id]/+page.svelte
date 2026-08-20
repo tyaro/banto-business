@@ -1,8 +1,7 @@
 <script lang="ts">
 	/**
 	 * projects の編集・削除（docs/recipes/add-resource.md 手順8）。
-	 * `items/[id]` と同じ形。添付ファイル欄は持たない（Phase 3 で経費に
-	 * 領収書を付ける段階まで用途が無いため）。
+	 * 添付ファイル欄は持たない（領収書を付けるのは経費だけ、要件 F-E3）。
 	 *
 	 * Phase 4 から、この画面に採算パネルを併置する（要件 F-P1: 案件詳細で
 	 * 契約額 / 案件売上 / 工数原価 / 直接経費 / 粗利 / 粗利率 を確認できる）。
@@ -32,7 +31,7 @@
 
 	// Rust 側のコマンドは `id: i64` を宣言しており、Tauri の serde は文字列を
 	// 数値に強制変換しないため、ルートパラメータ（常に文字列）を数値へ変換
-	// してから DataProvider へ渡す（`items/[id]` と同じ理由）。
+	// してから DataProvider へ渡す。
 	const rawId = page.params.id ?? '';
 	const parsedId = Number(rawId);
 	const idValid = rawId !== '' && Number.isInteger(parsedId);

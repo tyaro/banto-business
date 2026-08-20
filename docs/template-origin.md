@@ -78,7 +78,7 @@ Banto の `crates/*` と `packages/*` は **このリポジトリ内に同梱**�
 
 ### 未改変で残しているテンプレート由来の記述
 
-`apps/admin-template/**` の Rust コメント・`e2e/visual/README.md`・`scripts/scaffold.mjs` の案内文言に `pnpm --filter admin-template ...` という旧アプリ名の例が残っている（機能に影響しない文言のみ。上流との差分を無用に増やさないため、あえて追随していない）。ディレクトリ名 `apps/admin-template` と crate 名 `admin-template` / `admin-template-core` も同じ理由で維持する（Phase 0 決定：497 箇所の参照書き換えより上流差分の取りやすさを優先）。
+`apps/admin-template/**` の Rust コメント・`e2e/visual/README.md` の案内文言に `pnpm --filter admin-template ...` という旧アプリ名の例が残っている（機能に影響しない文言のみ。上流との差分を無用に増やさないため、あえて追随していない）。ディレクトリ名 `apps/admin-template` と crate 名 `admin-template` / `admin-template-core` も同じ理由で維持する（Phase 0 決定：497 箇所の参照書き換えより上流差分の取りやすさを優先）。
 
 ### 派生時に削除したもの
 
@@ -87,9 +87,33 @@ Banto の `crates/*` と `packages/*` は **このリポジトリ内に同梱**�
 | `.github/workflows/deploy-demo.yml` | Banto 本体の GitHub Pages ライブデモ公開用。Business では不要 |
 | `.github/workflows/template-acceptance.yml` | テンプレート自身（clone→rename→動く）の受け入れ検査。派生先では不要 |
 
-**Phase 0 では `items` デモを削除しない。** `docs/recipes/add-resource.md` が「リソース追加の唯一の正式手順は `items` のルート一式をコピーして書き換えること」と定めており、Phase 2（Customer / Project）の手本になるため。**Phase 2 完了後に削除する**（対象ファイルの全量は `README.md` §2 の表）。
+`packages/scan-wedge` は残す（未配線で無害）。
 
-`packages/scan-wedge` も残す（未配線で無害。削除すると `scripts/scaffold.*` と上流差分に不要な乖離が出る）。
+### [2026-08-20] Phase 7 直前 — `items` デモ一式の削除
+
+Phase 0 では「`docs/recipes/add-resource.md` がリソース追加の正式手順を『`items` のルート一式をコピーして書き換えること』と定めており、Phase 2（Customer / Project）の手本になる」という理由で残していた。Phase 6 までで Business 側のリソースが9本揃い、手本としての役目が終わったため、実運用（Phase 7）に入る前に削除した。
+
+削除した範囲:
+
+| 層 | 対象 |
+|---|---|
+| Rust サービス層 | `core/src/items.rs`・`core/src/rest/items.rs` |
+| Rust 配線 | `lib.rs` の `pub mod items`・`rest/mod.rs` の `Services.items` とルータ・`bin/banto-serve.rs`・`src-tauri` の `items_*` コマンド7本と `AppState.items` |
+| DB | `items` テーブルの `DROP`（`0021_drop_items_demo.sql`、両方言）。`0001_items.sql` は適用済みなので編集していない（CLAUDE.md 第5章） |
+| デモシード | `core/src/db.rs` の 1,000 行シード一式（`items` が唯一の投入先だった）。初回起動時の DB は**空**になる |
+| フロント | `routes/(app)/items/`・`resources/items.ts`・`itemsAdmin.ts`・ナビ項目・`items.*` / `panels.*` の i18n キー |
+| ダッシュボード | `items` から集計していたチャート群・ドック・パネルのポップアウト一式（`dashboard.ts` / `panels.ts` / `popout.ts` / `DashboardPanel.svelte` / `routes/panel/[id]` / `sampleData.ts`）。ダッシュボードは未入金・期限超過のパネルだけになった |
+| CSV エクスポート | `items_export_csv_to_folder`（Tauri）と `AppState.exports_dir`。呼び出し元がグリッドの `items` 一覧しか無かったため |
+| E2E | items の CRUD / CSV / 日報シナリオ。RBAC・監査・添付のシナリオは `customers` / `expenses` へ振り替えた |
+| Banto ツール | `scripts/scaffold.mjs` と `scripts/scaffold.test.mjs`（後述） |
+
+**同梱 Banto に1箇所だけ手を入れた**（CLAUDE.md 第3章の例外。利用者に確認済み）:
+
+- `crates/banto-admin-services/src/backup.rs` の `REQUIRED_TABLES` から `items` を外し、`["settings", "users", "audit_log"]` にした。この検査の意図は「Banto の DB かどうかの粗い判定」であり、判定対象は Banto が必ず作るテーブルに限るのが筋。`items` を残したままだと、Banto 自身が削除を促しているデモテーブルを消した瞬間に**バックアップ復元が全滅する**（作成側は成功するので、気付くのは復元しようとした時）。`docs/banto-feedback.md` に Banto 共通の問題として記録済み。上流差分を取り込むときは、この1行が上書きされていないか確認すること。
+
+**`scripts/scaffold.mjs` / `scripts/scaffold.test.mjs` を削除した。** 新しいテンプレートのコピーから不要な資産を「引く」ためのツールで、`items` のルート一式・ダッシュボードのドック配線を行単位で直書きしている。Phase 0 を通過した派生リポジトリでは二度と実行しないうえ、上の削除でパターンが全て失われて実行すれば失敗する。CI からも npm script からも呼ばれていない（`scaffold.test.mjs` はどの `pnpm test` にも配線されていなかった）。`README.md` 本文（原文のまま保持）と `docs/scaffold-presets-plan.md` には `pnpm scaffold` の記述が残るが、冒頭の案内ブロックのとおり Banto 本体向けの記述として読むこと。
+
+`docs/recipes/add-resource.md` の手本も `items` を前提に書かれているが、これは Banto の文書なので原文のまま残す。このリポジトリで手本にするなら `customers`（最小構成）または `expenses`（添付あり）を読むこと。
 
 ---
 

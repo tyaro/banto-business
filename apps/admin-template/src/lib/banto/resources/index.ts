@@ -8,19 +8,16 @@
 import type { ResourceDefinition } from '@banto/admin-core';
 import { customersResource } from './customers';
 import { expensesResource } from './expenses';
-import { itemsResource } from './items';
 import { projectsResource } from './projects';
 import { tripsResource } from './trips';
 import { workLogsResource } from './work-logs';
 
 export const resources: ResourceDefinition[] = [
-	// Business ドメイン（Phase 2 基本マスター）。`items` は Banto テンプレート
-	// 同梱のデモリソースで、Phase 2 完了後に削除する
-	// （docs/domain/open-questions.md の items デモの扱い）。
+	// Business ドメイン。Banto テンプレート同梱の `items` デモは
+	// Phase 7（実運用）の前に削除した。
 	customersResource,
 	projectsResource,
 	workLogsResource,
 	tripsResource,
-	expensesResource,
-	itemsResource
+	expensesResource
 ];
