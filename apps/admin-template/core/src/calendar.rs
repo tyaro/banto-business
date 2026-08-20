@@ -196,14 +196,14 @@ const WORK_BY_DAY_SQL: &str = "SELECT w.worked_on, p.id AS project_id, \
      CAST(COALESCE(SUM(w.minutes), 0) AS BIGINT) AS minutes, \
      CAST(COUNT(*) AS BIGINT) AS log_count \
      FROM work_logs w JOIN projects p ON p.id = w.project_id \
-     WHERE w.worked_on >= {0} AND w.worked_on <= {1} \
+     WHERE w.deleted_at IS NULL AND w.worked_on >= {0} AND w.worked_on <= {1} \
      GROUP BY w.worked_on, p.id, p.code, p.name \
      ORDER BY w.worked_on, minutes DESC, p.code";
 
 const EXPENSES_BY_DAY_SQL: &str = "SELECT spent_on AS date, \
      CAST(COUNT(*) AS BIGINT) AS row_count, \
      CAST(COALESCE(SUM(amount), 0) AS BIGINT) AS amount \
-     FROM expenses WHERE spent_on >= {0} AND spent_on <= {1} \
+     FROM expenses WHERE deleted_at IS NULL AND spent_on >= {0} AND spent_on <= {1} \
      GROUP BY spent_on";
 
 const PAYMENTS_BY_DAY_SQL: &str = "SELECT paid_on AS date, \
@@ -240,7 +240,7 @@ const INVOICE_DUE_SQL: &str = "SELECT i.due_on, i.total_amount, \
 /// 入れ替わる（PostgreSQL の `$1`/`$2` は番号で解決するので気付けない）。
 /// そのため `end_on >= 月初 AND start_on <= 月末` の順で書く。
 const TRIPS_OVERLAPPING_SQL: &str = "SELECT start_on, end_on FROM trips \
-     WHERE end_on >= {0} AND start_on <= {1}";
+     WHERE deleted_at IS NULL AND end_on >= {0} AND start_on <= {1}";
 
 /// カレンダーのサービス層（conventions §2）。読み取り専用 —— 集計値を
 /// 保持しない（モジュール冒頭）ので、書き込みの入口もイベント通知も持たない。
@@ -849,6 +849,50 @@ mod tests {
             .map(|d| d.date)
             .collect();
         assert_eq!(trip_days, vec!["2026-08-10", "2026-08-11", "2026-08-12"]);
+    }
+
+    /// **論理削除がカレンダーの集計へ波及しないこと**（`docs/domain/sync.md` 5節）。
+    ///
+    /// 日別集計は3つの表を別々に読むので、`deleted_at IS NULL` は3箇所に要る。
+    /// 1箇所でも抜けると、消したはずの行がその日の升目に残る。
+    #[tokio::test]
+    async fn deleted_rows_drop_out_of_the_calendar() {
+        let f = fixture().await;
+        f.add_work_log(f.project_id, "2026-08-03", 60).await;
+        f.add_expense("2026-08-05", 1_100).await;
+        TripsService::new(f.db.clone())
+            .create(TripInput {
+                project_id: f.project_id,
+                destination: "架空市".to_string(),
+                start_on: "2026-08-10".to_string(),
+                end_on: "2026-08-11".to_string(),
+                onsite_days: 2,
+                nights: 1,
+                note: None,
+                generate: None,
+            })
+            .await
+            .expect("trip");
+
+        assert_eq!(f.calendar.month("2026-08").await.unwrap().len(), 4);
+
+        // それぞれ1件ずつ消す。
+        let work_logs = WorkLogsService::new(f.db.clone());
+        let doomed_work = work_logs.list(ListParams::default()).await.unwrap().rows[0].id;
+        work_logs.delete(doomed_work).await.expect("delete 工数");
+
+        let expenses = ExpensesService::new(f.db.clone());
+        let doomed_expense = expenses.list(ListParams::default()).await.unwrap().rows[0].id;
+        expenses.delete(doomed_expense).await.expect("delete 経費");
+
+        let trips = TripsService::new(f.db.clone());
+        let doomed_trip = trips.list(ListParams::default()).await.unwrap().rows[0].id;
+        trips.delete(doomed_trip).await.expect("delete 出張");
+
+        assert!(
+            f.calendar.month("2026-08").await.unwrap().is_empty(),
+            "削除した行がカレンダーに残っている"
+        );
     }
 
     /// 支払期限の残額は `payments.rs::remaining_amount` の定義に従う

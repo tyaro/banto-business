@@ -291,8 +291,8 @@ impl WorkLogsService {
 
     pub async fn list(&self, params: ListParams) -> Result<ListResult<WorkLog>, BantoError> {
         let columns = column_map();
-        let select_rows = format!("SELECT {COLUMNS} FROM work_logs");
-        const SELECT_COUNT: &str = "SELECT COUNT(*) FROM work_logs";
+        let select_rows = format!("SELECT {COLUMNS} FROM {}", crate::sync::live("work_logs"));
+        let select_count = format!("SELECT COUNT(*) FROM {}", crate::sync::live("work_logs"));
 
         match &self.db {
             Db::Sqlite(pool) => {
@@ -307,7 +307,7 @@ impl WorkLogsService {
                     .fetch_all(pool)
                     .await
                     .map_err(banto_storage::storage_error)?;
-                let mut count_builder: QueryBuilder<'_, Sqlite> = QueryBuilder::new(SELECT_COUNT);
+                let mut count_builder: QueryBuilder<'_, Sqlite> = QueryBuilder::new(&select_count);
                 banto_storage::list_query::sqlite::append_where(
                     &mut count_builder,
                     &columns,
@@ -338,7 +338,7 @@ impl WorkLogsService {
                     .await
                     .map_err(banto_storage::storage_error)?;
                 let mut count_builder: QueryBuilder<'_, sqlx::Postgres> =
-                    QueryBuilder::new(SELECT_COUNT);
+                    QueryBuilder::new(&select_count);
                 banto_storage::list_query::postgres::append_where(
                     &mut count_builder,
                     &columns,
@@ -360,7 +360,7 @@ impl WorkLogsService {
     pub async fn get(&self, id: i64) -> Result<WorkLog, BantoError> {
         let dialect = self.db.dialect();
         let sql = format!(
-            "SELECT {COLUMNS} FROM work_logs WHERE id = {}",
+            "SELECT {COLUMNS} FROM work_logs WHERE id = {} AND deleted_at IS NULL",
             dialect.placeholder(1)
         );
         match &self.db {
@@ -494,8 +494,11 @@ impl WorkLogsService {
     pub async fn delete(&self, id: i64) -> Result<(), BantoError> {
         self.ensure_not_invoiced(id).await?;
         let dialect = self.db.dialect();
+        let today = today_expr(dialect);
         let sql = format!(
-            "DELETE FROM work_logs WHERE id = {}",
+            "UPDATE work_logs SET deleted_at = {}, updated_at = {today} WHERE id = {} \
+             AND deleted_at IS NULL",
+            crate::sync::deleted_at_expr(dialect),
             dialect.placeholder(1)
         );
         let rows_affected = match &self.db {
@@ -654,6 +657,38 @@ mod tests {
         assert_ne!(
             per_row, rounded_sum,
             "行ごと丸めと合計後丸めは 2 円ずれる（この差が出ることが本ケースの目的）"
+        );
+    }
+
+    /// **論理削除の基本形**（`docs/domain/sync.md` 5節）。
+    ///
+    /// 削除後は `get` が `NotFound`、一覧にも件数にも出ない。行自体は
+    /// 墓石として残る（同期の相手へ「消えた」ことを伝えるため）ので、
+    /// 二度目の削除は `NotFound` になる。
+    #[tokio::test]
+    async fn deleting_a_work_log_is_a_soft_delete() {
+        let (svc, _masters, project_id) = fixture().await;
+        svc.create(input(project_id, 60)).await.expect("残す");
+        let doomed = svc.create(input(project_id, 30)).await.expect("消す").id;
+        assert_eq!(
+            svc.list(ListParams::default()).await.unwrap().total_count,
+            2
+        );
+
+        svc.delete(doomed).await.expect("delete");
+
+        assert!(matches!(
+            svc.get(doomed).await.expect_err("墓石は get で返さない"),
+            BantoError::NotFound { .. }
+        ));
+        let listed = svc.list(ListParams::default()).await.unwrap();
+        assert_eq!(listed.total_count, 1, "削除した行が件数に残っている");
+        assert_eq!(listed.rows.len(), 1, "削除した行が一覧に残っている");
+        assert_ne!(listed.rows[0].id, doomed);
+
+        assert!(
+            svc.delete(doomed).await.is_err(),
+            "二重削除が静かに成功している"
         );
     }
 

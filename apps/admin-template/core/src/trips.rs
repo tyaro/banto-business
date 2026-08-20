@@ -359,8 +359,8 @@ impl TripsService {
 
     pub async fn list(&self, params: ListParams) -> Result<ListResult<Trip>, BantoError> {
         let columns = column_map();
-        let select_rows = format!("SELECT {COLUMNS} FROM trips");
-        const SELECT_COUNT: &str = "SELECT COUNT(*) FROM trips";
+        let select_rows = format!("SELECT {COLUMNS} FROM {}", crate::sync::live("trips"));
+        let select_count = format!("SELECT COUNT(*) FROM {}", crate::sync::live("trips"));
 
         match &self.db {
             Db::Sqlite(pool) => {
@@ -375,7 +375,7 @@ impl TripsService {
                     .fetch_all(pool)
                     .await
                     .map_err(banto_storage::storage_error)?;
-                let mut count_builder: QueryBuilder<'_, Sqlite> = QueryBuilder::new(SELECT_COUNT);
+                let mut count_builder: QueryBuilder<'_, Sqlite> = QueryBuilder::new(&select_count);
                 banto_storage::list_query::sqlite::append_where(
                     &mut count_builder,
                     &columns,
@@ -406,7 +406,7 @@ impl TripsService {
                     .await
                     .map_err(banto_storage::storage_error)?;
                 let mut count_builder: QueryBuilder<'_, sqlx::Postgres> =
-                    QueryBuilder::new(SELECT_COUNT);
+                    QueryBuilder::new(&select_count);
                 banto_storage::list_query::postgres::append_where(
                     &mut count_builder,
                     &columns,
@@ -428,7 +428,7 @@ impl TripsService {
     pub async fn get(&self, id: i64) -> Result<Trip, BantoError> {
         let dialect = self.db.dialect();
         let sql = format!(
-            "SELECT {COLUMNS} FROM trips WHERE id = {}",
+            "SELECT {COLUMNS} FROM trips WHERE id = {} AND deleted_at IS NULL",
             dialect.placeholder(1)
         );
         match &self.db {
@@ -530,11 +530,11 @@ impl TripsService {
     pub async fn linked_record_counts(&self, id: i64) -> Result<(i64, i64), BantoError> {
         let dialect = self.db.dialect();
         let work_sql = format!(
-            "SELECT COUNT(*) FROM work_logs WHERE trip_id = {}",
+            "SELECT COUNT(*) FROM work_logs WHERE trip_id = {} AND deleted_at IS NULL",
             dialect.placeholder(1)
         );
         let expense_sql = format!(
-            "SELECT COUNT(*) FROM expenses WHERE trip_id = {}",
+            "SELECT COUNT(*) FROM expenses WHERE trip_id = {} AND deleted_at IS NULL",
             dialect.placeholder(1)
         );
         let counts = match &self.db {
@@ -575,15 +575,25 @@ impl TripsService {
     /// 方言差に依存しないようにする。
     pub async fn delete(&self, id: i64) -> Result<(), BantoError> {
         let dialect = self.db.dialect();
+        let today = today_expr(dialect);
+        // 生成物の切り離しも生きている行だけに当てる。墓石まで触ると、
+        // 次の段（outbox）で「削除済みの行が変更された」という記録が立つ。
         let detach_work = format!(
-            "UPDATE work_logs SET trip_id = NULL WHERE trip_id = {}",
+            "UPDATE work_logs SET trip_id = NULL WHERE trip_id = {} AND deleted_at IS NULL",
             dialect.placeholder(1)
         );
         let detach_expense = format!(
-            "UPDATE expenses SET trip_id = NULL WHERE trip_id = {}",
+            "UPDATE expenses SET trip_id = NULL WHERE trip_id = {} AND deleted_at IS NULL",
             dialect.placeholder(1)
         );
-        let delete_sql = format!("DELETE FROM trips WHERE id = {}", dialect.placeholder(1));
+        // 論理削除（`docs/domain/sync.md` 5節）。物理削除だと、同期の相手が
+        // 「削除された」のか「まだ届いていない」のか区別できない。
+        let delete_sql = format!(
+            "UPDATE trips SET deleted_at = {}, updated_at = {today} WHERE id = {} \
+             AND deleted_at IS NULL",
+            crate::sync::deleted_at_expr(dialect),
+            dialect.placeholder(1)
+        );
 
         let rows_affected = match &self.db {
             Db::Sqlite(pool) => {
@@ -939,6 +949,74 @@ mod tests {
             note: None,
             generate,
         }
+    }
+
+    /// **論理削除の基本形と、紐づき件数が墓石を数えないこと**
+    /// （`docs/domain/sync.md` 5節）。
+    ///
+    /// 紐づき件数は「この出張を消すと何件が孤児になるか」を利用者に見せる値。
+    /// 墓石を数えると、実際には何も残っていないのに「工数2件・経費1件が
+    /// 紐づいています」と出て、消してよいかの判断を誤らせる。
+    #[tokio::test]
+    async fn deleting_a_trip_is_a_soft_delete_and_counts_ignore_tombstones() {
+        let (trips, work_logs, expenses, project_id) = fixture().await;
+        trips
+            .create(trip_input(project_id, None))
+            .await
+            .expect("残す出張");
+        let generated = trips
+            .create(trip_input(project_id, Some(generation())))
+            .await
+            .expect("消す出張");
+        let doomed = generated.trip.id;
+
+        let (work_count, expense_count) = trips.linked_record_counts(doomed).await.expect("counts");
+        assert!(work_count > 0 && expense_count > 0);
+
+        // 紐づいた工数を1件だけ論理削除すると、件数がその分だけ減る。
+        let linked_work = work_logs
+            .list(ListParams::default())
+            .await
+            .unwrap()
+            .rows
+            .into_iter()
+            .find(|row| row.trip_id == Some(doomed))
+            .expect("紐づいた工数");
+        work_logs.delete(linked_work.id).await.expect("delete 工数");
+        let (after_work, _) = trips.linked_record_counts(doomed).await.expect("counts");
+        assert_eq!(after_work, work_count - 1, "墓石を紐づき件数に数えている");
+
+        // 出張そのものの論理削除。
+        assert_eq!(
+            trips.list(ListParams::default()).await.unwrap().total_count,
+            2
+        );
+        trips.delete(doomed).await.expect("delete 出張");
+
+        assert!(matches!(
+            trips.get(doomed).await.expect_err("墓石は get で返さない"),
+            BantoError::NotFound { .. }
+        ));
+        let listed = trips.list(ListParams::default()).await.unwrap();
+        assert_eq!(listed.total_count, 1, "削除した出張が件数に残っている");
+        assert_ne!(listed.rows[0].id, doomed);
+
+        // 生成物は残り、trip_id だけ外れている（既存の挙動を変えていない）。
+        let surviving = expenses.list(ListParams::default()).await.unwrap();
+        assert_eq!(
+            surviving.rows.len(),
+            generated.expenses,
+            "生成した経費が道連れで消えている"
+        );
+        assert!(
+            surviving.rows.iter().all(|row| row.trip_id.is_none()),
+            "削除した出張への紐づきが残っている"
+        );
+
+        assert!(
+            trips.delete(doomed).await.is_err(),
+            "二重削除が成功している"
+        );
     }
 
     fn generation() -> TripGenerationInput {

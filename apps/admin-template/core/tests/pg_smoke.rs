@@ -34,6 +34,17 @@ use admin_template_core::work_logs::{WorkLogInput, WorkLogsService};
 use banto_core::ListParams;
 use std::path::PathBuf;
 
+/// pg_smoke の各テストは**同じ PostgreSQL データベース**を共有し、それぞれ
+/// [`reset_schema`] でスキーマを作り直す。`cargo test` は既定でテストを並列に
+/// 走らせるので、直列化しないと互いのテーブルを消し合う（片方が
+/// `DROP TABLE` した直後にもう片方が INSERT する）。
+///
+/// テストが1本だけの間は表面化しなかったが、Phase 8 で2本目・3本目を足した
+/// 時点で実際に落ちた。依存を増やさない（`ADR-0002`）ため、既に入っている
+/// tokio の Mutex で順番待ちにする。`std::sync::Mutex` は await をまたいで
+/// 保持できない。
+static PG_SMOKE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// Drop every table this app owns (plus sqlx's migration bookkeeping) so the
 /// smoke test starts from a clean schema even if a previous run left state
 /// behind. `CASCADE` also drops the identity sequences. Uses the public
@@ -85,6 +96,8 @@ async fn app_layer_crud_round_trips_on_postgres() {
         eprintln!("pg_smoke: BANTO_TEST_PG_URL unset - skipping (no PostgreSQL server)");
         return;
     };
+    // 同じ DB を共有するので直列化する（`PG_SMOKE_LOCK` の doc を参照）。
+    let _serialized = PG_SMOKE_LOCK.lock().await;
 
     reset_schema(&url).await;
 
@@ -491,6 +504,8 @@ async fn the_device_id_range_applies_to_postgres_identity_sequences() {
         eprintln!("pg_smoke: BANTO_TEST_PG_URL unset - skipping (no PostgreSQL server)");
         return;
     };
+    // 同じ DB を共有するので直列化する（`PG_SMOKE_LOCK` の doc を参照）。
+    let _serialized = PG_SMOKE_LOCK.lock().await;
 
     reset_schema(&url).await;
     let db = init_db_from_target(&url)
@@ -524,4 +539,103 @@ async fn the_device_id_range_applies_to_postgres_identity_sequences() {
         .await
         .expect("second customer");
     assert_eq!(second.id, first.id + 1);
+}
+
+/// **Phase 8: 論理削除の PostgreSQL 経路。**
+///
+/// `deleted_at` は TEXT 列（SQLite に日時型が無いので全ての日時が TEXT）。
+/// PostgreSQL 側は `NOW()::text` と明示的に落とす必要があり、`Dialect::now_expr()`
+/// の `NOW()`（timestamptz）をそのまま入れると型エラーになる。
+///
+/// **この経路は実際の PostgreSQL でしか踏めない。** ここに来る前、pg_smoke は
+/// 一度も `delete` を呼んでおらず、SQLite だけ通って PostgreSQL で落ちる状態に
+/// 気付けなかった。
+#[tokio::test]
+async fn soft_delete_round_trips_on_postgres() {
+    let Ok(url) = std::env::var("BANTO_TEST_PG_URL") else {
+        eprintln!("pg_smoke: BANTO_TEST_PG_URL unset - skipping (no PostgreSQL server)");
+        return;
+    };
+    // 同じ DB を共有するので直列化する（`PG_SMOKE_LOCK` の doc を参照）。
+    let _serialized = PG_SMOKE_LOCK.lock().await;
+
+    reset_schema(&url).await;
+    let db = init_db_from_target(&url)
+        .await
+        .expect("init_db_from_target should succeed");
+
+    let customer = CustomersService::new(db.clone())
+        .create(range_customer("PG-D001", "架空商事"))
+        .await
+        .expect("customer");
+    let project = ProjectsService::new(db.clone())
+        .create(ProjectInput {
+            code: "PG-P001".to_string(),
+            customer_id: customer.id,
+            name: "架空案件".to_string(),
+            status: "IN_PROGRESS".to_string(),
+            started_on: None,
+            due_on: None,
+            estimate_amount: None,
+            contract_amount: None,
+            billing_hourly_rate: None,
+            scope: None,
+            note: None,
+        })
+        .await
+        .expect("project");
+
+    let work_logs = WorkLogsService::new(db.clone());
+    let keep = work_logs
+        .create(WorkLogInput {
+            project_id: project.id,
+            trip_id: None,
+            worked_on: "2026-08-20".to_string(),
+            work_category_code: "DESIGN".to_string(),
+            minutes: 60,
+            // このテストの主題は削除経路で原価ではないので、レートマスタに
+            // 依存せず単価を直接渡す。
+            applied_rate: Some(6_000),
+            description: None,
+            invoiced: false,
+        })
+        .await
+        .expect("残す工数");
+    let doomed = work_logs
+        .create(WorkLogInput {
+            project_id: project.id,
+            trip_id: None,
+            worked_on: "2026-08-21".to_string(),
+            work_category_code: "DESIGN".to_string(),
+            minutes: 120,
+            applied_rate: Some(6_000),
+            description: None,
+            invoiced: false,
+        })
+        .await
+        .expect("消す工数");
+
+    work_logs
+        .delete(doomed.id)
+        .await
+        .expect("soft delete on postgres");
+
+    // 墓石は get にも一覧にも出ない。
+    assert!(work_logs.get(doomed.id).await.is_err());
+    let listed = work_logs
+        .list(ListParams::default())
+        .await
+        .expect("list on postgres");
+    assert_eq!(listed.total_count, 1);
+    assert_eq!(listed.rows[0].id, keep.id);
+
+    // 採算からも落ちている。
+    let profit = ProfitabilityService::new(db.clone())
+        .get(project.id)
+        .await
+        .expect("profitability on postgres");
+    assert_eq!(profit.total_minutes, 60);
+
+    // 二重削除は NotFound。
+    assert!(work_logs.delete(doomed.id).await.is_err());
 }

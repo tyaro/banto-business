@@ -266,8 +266,8 @@ impl ExpensesService {
 
     pub async fn list(&self, params: ListParams) -> Result<ListResult<Expense>, BantoError> {
         let columns = column_map();
-        let select_rows = format!("SELECT {COLUMNS} FROM expenses");
-        const SELECT_COUNT: &str = "SELECT COUNT(*) FROM expenses";
+        let select_rows = format!("SELECT {COLUMNS} FROM {}", crate::sync::live("expenses"));
+        let select_count = format!("SELECT COUNT(*) FROM {}", crate::sync::live("expenses"));
 
         match &self.db {
             Db::Sqlite(pool) => {
@@ -282,7 +282,7 @@ impl ExpensesService {
                     .fetch_all(pool)
                     .await
                     .map_err(banto_storage::storage_error)?;
-                let mut count_builder: QueryBuilder<'_, Sqlite> = QueryBuilder::new(SELECT_COUNT);
+                let mut count_builder: QueryBuilder<'_, Sqlite> = QueryBuilder::new(&select_count);
                 banto_storage::list_query::sqlite::append_where(
                     &mut count_builder,
                     &columns,
@@ -313,7 +313,7 @@ impl ExpensesService {
                     .await
                     .map_err(banto_storage::storage_error)?;
                 let mut count_builder: QueryBuilder<'_, sqlx::Postgres> =
-                    QueryBuilder::new(SELECT_COUNT);
+                    QueryBuilder::new(&select_count);
                 banto_storage::list_query::postgres::append_where(
                     &mut count_builder,
                     &columns,
@@ -335,7 +335,7 @@ impl ExpensesService {
     pub async fn get(&self, id: i64) -> Result<Expense, BantoError> {
         let dialect = self.db.dialect();
         let sql = format!(
-            "SELECT {COLUMNS} FROM expenses WHERE id = {}",
+            "SELECT {COLUMNS} FROM expenses WHERE id = {} AND deleted_at IS NULL",
             dialect.placeholder(1)
         );
         match &self.db {
@@ -463,7 +463,13 @@ impl ExpensesService {
     pub async fn delete(&self, id: i64) -> Result<(), BantoError> {
         self.ensure_not_invoiced(id).await?;
         let dialect = self.db.dialect();
-        let sql = format!("DELETE FROM expenses WHERE id = {}", dialect.placeholder(1));
+        let today = today_expr(dialect);
+        let sql = format!(
+            "UPDATE expenses SET deleted_at = {}, updated_at = {today} WHERE id = {} \
+             AND deleted_at IS NULL",
+            crate::sync::deleted_at_expr(dialect),
+            dialect.placeholder(1)
+        );
         let rows_affected = match &self.db {
             Db::Sqlite(pool) => sqlx::query(&sql)
                 .bind(id)
@@ -579,6 +585,45 @@ mod tests {
             }
             other => panic!("expected Validation, got {other:?}"),
         }
+    }
+
+    /// **論理削除の基本形**（`docs/domain/sync.md` 5節）。
+    ///
+    /// 削除後は `get` が `NotFound`、一覧にも件数にも出ない。行自体は
+    /// 墓石として残る（同期の相手へ「消えた」ことを伝えるため）ので、
+    /// 二度目の削除は `NotFound` になる。
+    #[tokio::test]
+    async fn deleting_an_expense_is_a_soft_delete() {
+        let (expenses, project_id) = fixture().await;
+        expenses.create(input(project_id)).await.expect("残す");
+        let doomed = expenses.create(input(project_id)).await.expect("消す").id;
+        assert_eq!(
+            expenses
+                .list(ListParams::default())
+                .await
+                .unwrap()
+                .total_count,
+            2
+        );
+
+        expenses.delete(doomed).await.expect("delete");
+
+        assert!(matches!(
+            expenses
+                .get(doomed)
+                .await
+                .expect_err("墓石は get で返さない"),
+            BantoError::NotFound { .. }
+        ));
+        let listed = expenses.list(ListParams::default()).await.unwrap();
+        assert_eq!(listed.total_count, 1, "削除した行が件数に残っている");
+        assert_eq!(listed.rows.len(), 1, "削除した行が一覧に残っている");
+        assert_ne!(listed.rows[0].id, doomed);
+
+        assert!(
+            expenses.delete(doomed).await.is_err(),
+            "二重削除が静かに成功している"
+        );
     }
 
     /// **決定 C-20。** 請求済みの行は編集も削除もできない。
