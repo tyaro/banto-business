@@ -127,13 +127,13 @@
 	}
 
 	.generate h2 {
-		font-size: var(--banto-font-size-md);
+		font-size: 1rem;
 		margin: 0 0 0.25rem;
 	}
 
 	.hint {
 		color: var(--banto-text-muted);
-		font-size: var(--banto-font-size-sm);
+		font-size: 0.85rem;
 		margin: 0 0 0.75rem;
 	}
 
@@ -147,7 +147,7 @@
 	.checkbox {
 		display: flex;
 		flex-direction: column;
-		font-size: var(--banto-font-size-sm);
+		font-size: 0.85rem;
 		gap: 0.25rem;
 	}
 

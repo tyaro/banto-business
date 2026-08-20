@@ -51,6 +51,7 @@
 //! | POST   | `/api/trips`         | `TripInput`    | `TripGenerationResult` (editor+, 一括生成) |
 //! | PUT    | `/api/trips/{id}`    | `TripInput`    | `Trip` (editor+)        |
 //! | DELETE | `/api/trips/{id}`    | -              | 204 (editor+, 生成物は trip_id を NULL 化) |
+//! | GET    | `/api/profitability/{id}` | -           | `ProjectProfitability` (any role, id は案件 id) |
 //! | GET    | `/api/users`         | -              | `UserSummary[]` (admin) |
 //! | POST   | `/api/users`         | `{username,password,displayName,role}` | `UserIdentityResponse` (admin) |
 //! | PUT    | `/api/users/{id}`    | `{displayName,role}` | `UserSummary` (admin) |
@@ -232,6 +233,7 @@ use crate::items::{ImportResult, Item, ItemImportRow, ItemInput, ItemsService};
 use crate::masters::{
     CostRateInput, CostRateValues, ExpenseCategory, MastersService, WorkCategory,
 };
+use crate::profitability::{ProfitabilityService, ProjectProfitability};
 use crate::projects::{Project, ProjectInput, ProjectsService};
 use crate::settings::SettingsService;
 use crate::system_info::SystemInfoService;
@@ -244,6 +246,7 @@ mod customers;
 mod expenses;
 mod items;
 mod masters;
+mod profitability;
 mod projects;
 #[cfg(test)]
 mod tests;
@@ -262,6 +265,7 @@ use customers::customers_router;
 use expenses::expenses_router;
 use items::items_router;
 use masters::masters_router;
+use profitability::profitability_router;
 use projects::projects_router;
 use trips::trips_router;
 use work_logs::work_logs_router;
@@ -298,6 +302,8 @@ pub struct Services {
     pub work_logs: WorkLogsService,
     pub expenses: ExpensesService,
     pub trips: TripsService,
+    /// Business ドメイン（Phase 4 採算管理）。読み取り専用。
+    pub profitability: ProfitabilityService,
     pub users: UsersService,
     pub settings: SettingsService,
     pub audit: AuditLogService,
@@ -332,6 +338,7 @@ pub fn api_router(
         work_logs,
         expenses,
         trips,
+        profitability,
         users,
         settings,
         audit,
@@ -369,6 +376,7 @@ pub fn api_router(
         .merge(work_logs_router(work_logs, audit.clone(), auth.clone()))
         .merge(expenses_router(expenses, audit.clone(), auth.clone()))
         .merge(trips_router(trips, audit.clone(), auth.clone()))
+        .merge(profitability_router(profitability, auth.clone()))
         .merge(users_router(users, audit.clone(), auth.clone()))
         .merge(audit_log_router(
             audit.clone(),

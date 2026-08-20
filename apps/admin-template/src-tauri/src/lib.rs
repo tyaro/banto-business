@@ -31,6 +31,7 @@ use admin_template_core::items::{ImportResult, Item, ItemImportRow, ItemInput, I
 use admin_template_core::masters::{
     CostRateInput, CostRateValues, ExpenseCategory, MastersService, WorkCategory,
 };
+use admin_template_core::profitability::{ProfitabilityService, ProjectProfitability};
 use admin_template_core::projects::{Project, ProjectInput, ProjectsService};
 use admin_template_core::rest::{api_router, audited_credential_verifier, Services};
 use admin_template_core::settings::{AuditSettings, AuthSettings, ServerSettings, SettingsService};
@@ -68,6 +69,9 @@ struct AppState {
     work_logs: WorkLogsService,
     expenses: ExpensesService,
     trips: TripsService,
+    /// Phase 4（採算管理）。採算値を保持しない導出専用のサービスなので
+    /// 変更イベントを持たない（要件 F-P7）。
+    profitability: ProfitabilityService,
     /// The webview window's own session identity, set by `auth_login`/
     /// `auth_setup` and cleared by `auth_logout` - all called directly via
     /// `invoke()`, never through `/api/auth/login`. `Some` means logged in;
@@ -521,6 +525,19 @@ async fn trips_linked_counts(
     require_role(&state, Role::Viewer, "trips").await?;
     let (work_logs, expenses) = state.trips.linked_record_counts(id).await?;
     Ok(serde_json::json!({ "workLogs": work_logs, "expenses": expenses }))
+}
+
+/// 案件採算（Phase 4）。REST の `GET /api/profitability/{id}`（id は案件 id）と同じ
+/// `ProfitabilityService::get` を呼ぶ（conventions §1 の両経路対称）。
+/// 読み取りなので監査しない。実質時間単価は移動込み・移動除くが必ず揃って
+/// 返る（要件 F-P2 — 片方だけを返す入口を作らない）。
+#[tauri::command]
+async fn profitability_get(
+    state: State<'_, AppState>,
+    id: i64,
+) -> Result<ProjectProfitability, BantoError> {
+    require_role(&state, Role::Viewer, "profitability").await?;
+    state.profitability.get(id).await
 }
 
 /// 出張の登録。`generate` を伴うと工数・経費を一括生成する（要件 F-T1）。
@@ -1301,6 +1318,7 @@ async fn start_embedded_server(
     work_logs: WorkLogsService,
     expenses: ExpensesService,
     trips: TripsService,
+    profitability: ProfitabilityService,
     users: UsersService,
     settings: SettingsService,
     audit: AuditLogService,
@@ -1326,6 +1344,7 @@ async fn start_embedded_server(
         work_logs,
         expenses,
         trips,
+        profitability,
         users,
         settings,
         audit,
@@ -1408,6 +1427,7 @@ async fn server_apply(
                 state.work_logs.clone(),
                 state.expenses.clone(),
                 state.trips.clone(),
+                state.profitability.clone(),
                 state.users.clone(),
                 state.settings.clone(),
                 state.audit.clone(),
@@ -2383,6 +2403,8 @@ pub fn run() {
             let work_logs = WorkLogsService::new(db.clone()).with_events(events.clone());
             let expenses = ExpensesService::new(db.clone()).with_events(events.clone());
             let trips = TripsService::new(db.clone()).with_events(events.clone());
+            // 採算は導出専用（変更が無いので `with_events` を持たない）。
+            let profitability = ProfitabilityService::new(db.clone());
             let users = UsersService::new(db.clone());
             let settings = SettingsService::new(db.clone());
             let backup = BackupService::new(db_path.clone(), db.clone());
@@ -2599,6 +2621,7 @@ pub fn run() {
                     work_logs.clone(),
                     expenses.clone(),
                     trips.clone(),
+                    profitability.clone(),
                     users.clone(),
                     settings.clone(),
                     audit.clone(),
@@ -2666,6 +2689,7 @@ pub fn run() {
                 work_logs,
                 expenses,
                 trips,
+                profitability,
                 auth: Mutex::new(initial_auth),
                 users,
                 settings,
@@ -2721,6 +2745,7 @@ pub fn run() {
             trips_create,
             trips_update,
             trips_delete,
+            profitability_get,
             auth_status,
             auth_setup,
             auth_login,
@@ -2788,6 +2813,7 @@ mod tests {
             work_logs: WorkLogsService::new(pool.clone()).with_events(events.clone()),
             expenses: ExpensesService::new(pool.clone()).with_events(events.clone()),
             trips: TripsService::new(pool.clone()).with_events(events.clone()),
+            profitability: ProfitabilityService::new(pool.clone()),
             auth: Mutex::new(None),
             users: UsersService::new(pool.clone()),
             settings: SettingsService::new(pool.clone()),
@@ -2834,6 +2860,7 @@ mod tests {
             work_logs: WorkLogsService::new(pool.clone()).with_events(events.clone()),
             expenses: ExpensesService::new(pool.clone()).with_events(events.clone()),
             trips: TripsService::new(pool.clone()).with_events(events.clone()),
+            profitability: ProfitabilityService::new(pool.clone()),
             auth: Mutex::new(None),
             users: UsersService::new(pool.clone()),
             settings: SettingsService::new(pool.clone()),

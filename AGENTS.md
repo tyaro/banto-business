@@ -264,7 +264,7 @@ apt-get update -qq && apt-get install -y \
 
 ## 7. Phase 進行
 
-現在の Phase：**Phase 4（採算管理）着手可**
+現在の Phase：**Phase 5（請求）着手可**
 
 | Phase | 内容                                   | 状態   |
 | ----- | -------------------------------------- | ------ |
@@ -272,16 +272,25 @@ apt-get update -qq && apt-get install -y \
 | 1     | 要件・ドメイン設計                     | 完了   |
 | 2     | 基本マスター（Customer / Project）     | 完了   |
 | 3     | 工数・経費（WorkLog / Trip / Expense） | 完了   |
-| 4     | 採算管理                               | 着手可 |
-| 5     | 請求（Invoice / PDF）                  | 未着手 |
+| 4     | 採算管理                               | 完了   |
+| 5     | 請求（Invoice / PDF）                  | 着手可 |
 | 6     | 入金管理（Payment）                    | 未着手 |
 | 7     | 実運用評価                             | 未着手 |
 
 Phase 1 の成果物は `docs/domain/`（requirements / er-diagram / schema / state-machine / glossary / open-questions）にあり、未決事項はゼロ。`docs/tax-calculation.md` も確定済み。
 
+Phase 4 着手時に1件（C-16：経費を採算に計上するときの税抜換算）が新たに判明し、
+確認のうえ `docs/domain/open-questions.md` に決定として記録した。**`expenses.amount`
+は税込の実支出、案件採算は税抜**なので、行ごとに仕入側の税区分で税抜へ換算する
+（1円未満切捨て、行ごとに1回）。
+
+**案件売上は Phase 5 の `invoice_lines` が入るまで構造的に 0 になる**
+（F-P4：未請求の作業・経費は売上に立たない）。`ProfitabilityService::revenue_for`
+がその唯一の差し替え地点。
+
 **リソース識別子は Rust の識別子として妥当な綴りにする**（`work_logs` / `cost_rates`）。`@banto/admin-core` の DataProvider が Tauri コマンドを `${resource}_list` の規約で呼ぶため、ハイフンを含む名前はコマンドを定義できない（`docs/banto-feedback.md` に記録）。画面の URL は `/work-logs` のようにケバブケースで構わない。
 
-Phase 3 までで `docs/banto-feedback.md` に7件記録済み。**`items` デモの削除は未実施**（Phase 4 以降の任意のタイミングで行う。もう手本としては使わない）。
+Phase 4 までで `docs/banto-feedback.md` に11件記録済み。**`items` デモの削除は未実施**（Phase 4 以降の任意のタイミングで行う。もう手本としては使わない）。
 
 **Phase 1 が確定するまで Phase 2 以降のテーブルを先行実装しない。**
 

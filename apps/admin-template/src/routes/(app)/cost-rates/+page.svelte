@@ -146,7 +146,7 @@
 
 	.note {
 		color: var(--banto-text-muted);
-		font-size: var(--banto-font-size-sm);
+		font-size: 0.85rem;
 		margin: 0;
 	}
 
@@ -172,13 +172,13 @@
 
 	th {
 		color: var(--banto-text-muted);
-		font-size: var(--banto-font-size-sm);
+		font-size: 0.85rem;
 		font-weight: 600;
 	}
 
 	.muted {
 		color: var(--banto-text-muted);
-		font-size: var(--banto-font-size-sm);
+		font-size: 0.85rem;
 	}
 
 	input[type='number'] {
