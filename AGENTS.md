@@ -301,11 +301,26 @@ InvoiceLine 合計**として集計する（Draft と取消済みは立たない
 
 **リソース識別子は Rust の識別子として妥当な綴りにする**（`work_logs` / `cost_rates`）。`@banto/admin-core` の DataProvider が Tauri コマンドを `${resource}_list` の規約で呼ぶため、ハイフンを含む名前はコマンドを定義できない（`docs/banto-feedback.md` に記録）。画面の URL は `/work-logs` のようにケバブケースで構わない。
 
-`docs/banto-feedback.md` に15件記録済み。
+`docs/banto-feedback.md` に17件記録済み。
 
 **`items` デモは削除済み**（2026-08-20、Phase 7 の直前。削除範囲と経緯は `docs/template-origin.md`）。新しいリソースを足すときの手本は `docs/recipes/add-resource.md` の手順に従いつつ、このリポジトリの実物としては **`customers`（最小構成）** または **`expenses`（領収書の添付あり）** を読むこと。レシピ本文は Banto の文書なので `items` を例に書かれたままだが、それらのファイルはもう無い。
 
 デモ削除に伴い、**初回起動時の DB は空**になった（1,000 行のデモシードは `items` が唯一の投入先だった）。ダッシュボードも未入金・期限超過のパネルだけになっている。業務データを使った指標を並べるのは Phase 7 の実運用評価で「毎日何を見たいか」が決まってから。
+
+### カレンダー（`/calendar`）は2層に分けてある
+
+月カレンダーは **Banto へ昇格する可能性がある**ため（`banto-industrial` でも同種の画面が要りそう、という指摘があった）、業務の知識を持つ層と持たない層を最初から分けてある。
+
+| 層           | 場所                                                                           | 知っていること                                                       |
+| ------------ | ------------------------------------------------------------------------------ | -------------------------------------------------------------------- |
+| 汎用グリッド | `src/lib/components/calendar/`（`month.ts` / `types.ts` / `MonthGrid.svelte`） | 日付の升目だけ。業務データ・文言・ロケール・今日の日付を**知らない** |
+| 業務との接続 | `src/lib/components/business/WorkCalendar.svelte`                              | 工数・経費・出張・請求・入金を `CalendarCell` へ翻訳する             |
+
+汎用層は `$lib` import を持たず、文言は解決済み文字列を `messages` props で受け取る（conventions §5 / ADR-0005 レイヤ①）。**この制約を崩すと昇格できなくなる**ので、汎用層に業務の型や `$lib/paraglide` を持ち込まないこと。昇格するかは Phase 7 で実際に使ってから決める（`docs/banto-feedback.md`）。
+
+集計はすべてサーバ側（`core/src/calendar.rs`）。読み取り専用の疑似リソース `calendar` として `DataProvider.getList` の規約に載せてあり、対象月は `month` フィルタ（`YYYY-MM`）で渡す。**月の指定が無ければ 422**で、勝手に「今月」へ倒さない（指定漏れが黙って別の月を返す形で表に出るため）。
+
+app 層の純粋な TypeScript には **vitest** を用意した（`apps/admin-template/vitest.config.ts`、対象は `src/**/*.test.ts`）。`vite.config.ts` とは別ファイルなのは、SvelteKit / Paraglide のプラグインを読み込ませないため。
 
 **Phase 1 が確定するまで Phase 2 以降のテーブルを先行実装しない。**
 

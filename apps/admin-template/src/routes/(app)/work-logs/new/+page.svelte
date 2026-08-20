@@ -5,6 +5,7 @@
 	 * 渡し、保存は `createFormResource` 経由で DataProvider に投げる。
 	 */
 	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
 	import { base } from '$app/paths';
 	import { BantoForm, createFormStore } from '@banto/forms';
 	import type { FormSchema } from '@banto/forms';
@@ -19,8 +20,16 @@
 	const schema = resource.schema as FormSchema;
 
 	const formResource = createFormResource('work_logs');
+	// カレンダーの升目から「この日に工数を追加」で来たときは、その日付を
+	// 初期値に入れておく（`?date=YYYY-MM-DD`）。日付を選び直させると、
+	// カレンダーで日を指した意味が無くなる。
+	// 検証はサーバ側が行うので、ここは形だけ確かめて弾く。
+	const dateParam = page.url.searchParams.get('date');
+	const initialValues = /^\d{4}-\d{2}-\d{2}$/.test(dateParam ?? '')
+		? { workedOn: dateParam }
+		: undefined;
 	// i18n layer ② (ADR-0005): Paraglide 由来の検証メッセージを注入する。
-	const store = createFormStore(schema, undefined, formValidationMessages());
+	const store = createFormStore(schema, initialValues, formValidationMessages());
 
 	$effect(() => {
 		void formResource.load();

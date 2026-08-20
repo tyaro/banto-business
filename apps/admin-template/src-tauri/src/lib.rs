@@ -23,6 +23,7 @@ mod keyring_store;
 use admin_template_core::assets::FrontendAssets;
 use admin_template_core::audit::{AuditEntry, AuditLogEntry, AuditLogService};
 use admin_template_core::backup::{BackupInfo, BackupService, PendingRestoreInfo};
+use admin_template_core::calendar::{month_from_params, CalendarDay, CalendarService};
 use admin_template_core::customers::{Customer, CustomerInput, CustomersService};
 use admin_template_core::db::init_db;
 use admin_template_core::events::event_channel;
@@ -76,6 +77,7 @@ struct AppState {
     /// Phase 4（採算管理）。採算値を保持しない導出専用のサービスなので
     /// 変更イベントを持たない（要件 F-P7）。
     profitability: ProfitabilityService,
+    calendar: CalendarService,
     /// Phase 5（請求）。確定は work_logs / expenses の `invoiced` も動かすため、
     /// InvoicesService が3リソース分の変更イベントを送る。
     invoices: InvoicesService,
@@ -828,6 +830,30 @@ async fn profitability_get(
     state.profitability.get(id).await
 }
 
+/// 月カレンダー（Phase 7 準備）。REST の `POST /api/calendar/list` と同じ
+/// `CalendarService::month` を呼ぶ（conventions §1 の両経路対称）。
+/// 読み取りなので監査しない。
+///
+/// `ListParams` から使うのは `month` フィルタだけ。無ければ 422 相当の
+/// `Validation` を返す —— 既定で「今月」に倒すと、フロントの指定漏れが
+/// 黙って別の月を返す形で表に出る（REST 側と同じ判断）。
+#[tauri::command]
+async fn calendar_list(
+    state: State<'_, AppState>,
+    params: ListParams,
+) -> Result<ListResult<CalendarDay>, BantoError> {
+    require_role(&state, Role::Viewer, "calendar").await?;
+    let month = month_from_params(&params).ok_or_else(|| BantoError::Validation {
+        field_errors: vec![banto_core::FieldError {
+            field: "month".to_string(),
+            message: "month filter is required (YYYY-MM)".to_string(),
+        }],
+    })?;
+    let rows = state.calendar.month(&month).await?;
+    let total_count = rows.len() as u64;
+    Ok(ListResult { rows, total_count })
+}
+
 /// 出張の登録。`generate` を伴うと工数・経費を一括生成する（要件 F-T1）。
 /// 監査の detail に生成件数を残すのは REST 経路と同じ（生成物は後から個別
 /// 編集できるので、作成時点の内訳が無いと差分を追えない）。
@@ -1455,6 +1481,7 @@ async fn start_embedded_server(
     expenses: ExpensesService,
     trips: TripsService,
     profitability: ProfitabilityService,
+    calendar: CalendarService,
     invoices: InvoicesService,
     issuer: IssuerService,
     payments: PaymentsService,
@@ -1483,6 +1510,7 @@ async fn start_embedded_server(
         expenses,
         trips,
         profitability,
+        calendar,
         invoices,
         issuer,
         payments,
@@ -1568,6 +1596,7 @@ async fn server_apply(
                 state.expenses.clone(),
                 state.trips.clone(),
                 state.profitability.clone(),
+                state.calendar.clone(),
                 state.invoices.clone(),
                 state.issuer.clone(),
                 state.payments.clone(),
@@ -2490,8 +2519,9 @@ pub fn run() {
             let work_logs = WorkLogsService::new(db.clone()).with_events(events.clone());
             let expenses = ExpensesService::new(db.clone()).with_events(events.clone());
             let trips = TripsService::new(db.clone()).with_events(events.clone());
-            // 採算は導出専用（変更が無いので `with_events` を持たない）。
+            // 採算・カレンダーは導出専用（変更が無いので `with_events` を持たない）。
             let profitability = ProfitabilityService::new(db.clone());
+            let calendar = CalendarService::new(db.clone());
             let invoices = InvoicesService::new(db.clone()).with_events(events.clone());
             let payments = PaymentsService::new(db.clone()).with_events(events.clone());
             let users = UsersService::new(db.clone());
@@ -2708,6 +2738,7 @@ pub fn run() {
                     expenses.clone(),
                     trips.clone(),
                     profitability.clone(),
+                    calendar.clone(),
                     invoices.clone(),
                     issuer.clone(),
                     payments.clone(),
@@ -2778,6 +2809,7 @@ pub fn run() {
                 expenses,
                 trips,
                 profitability,
+                calendar,
                 invoices,
                 issuer,
                 payments,
@@ -2829,6 +2861,7 @@ pub fn run() {
             trips_update,
             trips_delete,
             profitability_get,
+            calendar_list,
             invoices_list,
             invoices_get,
             invoices_candidates,
@@ -2913,6 +2946,7 @@ mod tests {
             expenses: ExpensesService::new(pool.clone()).with_events(events.clone()),
             trips: TripsService::new(pool.clone()).with_events(events.clone()),
             profitability: ProfitabilityService::new(pool.clone()),
+            calendar: CalendarService::new(pool.clone()),
             invoices: InvoicesService::new(pool.clone()),
             payments: PaymentsService::new(pool.clone()),
             issuer: IssuerService::new(SettingsService::new(pool.clone())),
@@ -2961,6 +2995,7 @@ mod tests {
             expenses: ExpensesService::new(pool.clone()).with_events(events.clone()),
             trips: TripsService::new(pool.clone()).with_events(events.clone()),
             profitability: ProfitabilityService::new(pool.clone()),
+            calendar: CalendarService::new(pool.clone()),
             invoices: InvoicesService::new(pool.clone()),
             payments: PaymentsService::new(pool.clone()),
             issuer: IssuerService::new(SettingsService::new(pool.clone())),

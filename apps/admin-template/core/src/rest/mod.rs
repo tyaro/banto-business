@@ -45,6 +45,7 @@
 //! | POST   | `/api/trips`         | `TripInput`    | `TripGenerationResult` (editor+, 一括生成) |
 //! | PUT    | `/api/trips/{id}`    | `TripInput`    | `Trip` (editor+)        |
 //! | DELETE | `/api/trips/{id}`    | -              | 204 (editor+, 生成物は trip_id を NULL 化) |
+//! | POST   | `/api/calendar/list` | `ListParams`   | `ListResult<CalendarDay>` (any role, `month` フィルタ必須) |
 //! | GET    | `/api/profitability/{id}` | -           | `ProjectProfitability` (any role, id は案件 id) |
 //! | POST   | `/api/invoices/list` | `ListParams`   | `ListResult<Invoice>` (any role) |
 //! | POST   | `/api/invoices/candidates` | `CandidateQuery` | `CandidateLine[]` (any role, 未請求の工数・経費) |
@@ -227,6 +228,7 @@ use tokio::sync::broadcast;
 
 use crate::audit::AuditLogService;
 use crate::backup::BackupService;
+use crate::calendar::{month_from_params, CalendarDay, CalendarService, MONTH_FILTER};
 use crate::customers::{Customer, CustomerInput, CustomersService};
 use crate::expenses::{Expense, ExpenseInput, ExpensesService};
 use crate::invoices::{
@@ -246,6 +248,7 @@ use crate::users::{Role, UsersService};
 use crate::work_logs::{WorkLog, WorkLogInput, WorkLogsService};
 
 mod attachments;
+mod calendar;
 mod customers;
 mod expenses;
 mod invoices;
@@ -267,6 +270,7 @@ mod work_logs;
 pub use banto_server::routes::audited_credential_verifier;
 
 use attachments::attachments_router;
+use calendar::calendar_router;
 use customers::customers_router;
 use expenses::expenses_router;
 use invoices::invoices_router;
@@ -311,6 +315,8 @@ pub struct Services {
     pub trips: TripsService,
     /// Business ドメイン（Phase 4 採算管理）。読み取り専用。
     pub profitability: ProfitabilityService,
+    /// Business ドメイン（Phase 7 準備：月カレンダー）。読み取り専用。
+    pub calendar: CalendarService,
     /// Business ドメイン（Phase 5 請求）。
     pub invoices: InvoicesService,
     pub issuer: IssuerService,
@@ -350,6 +356,7 @@ pub fn api_router(
         expenses,
         trips,
         profitability,
+        calendar,
         invoices,
         issuer,
         payments,
@@ -390,6 +397,7 @@ pub fn api_router(
         ))
         .merge(trips_router(trips, audit.clone(), auth.clone()))
         .merge(profitability_router(profitability, auth.clone()))
+        .merge(calendar_router(calendar, auth.clone()))
         .merge(invoices_router(invoices, audit.clone(), auth.clone()))
         .merge(issuer_router(issuer, audit.clone(), auth.clone()))
         .merge(payments_router(payments, audit.clone(), auth.clone()))
