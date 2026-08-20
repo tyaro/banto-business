@@ -328,6 +328,7 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 		{ tauri: 'audit_log_list', rest: 'POST /api/audit-log/list', role: 'Admin' },
 		{ tauri: 'system_info', rest: 'GET /api/system/info', role: 'Admin' },
 		{ tauri: 'profitability_get', rest: 'GET /api/profitability/{id}', role: 'Viewer' },
+		{ tauri: 'calendar_list', rest: 'POST /api/calendar/list', role: 'Viewer' },
 		{ tauri: 'issuer_get', rest: 'GET /api/issuer', role: 'Admin' }
 	];
 
@@ -350,6 +351,7 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 		'attachments_read_body',
 		'attachments_read_thumbnail',
 		'audit_config_get',
+		'calendar_list',
 		'audit_log_list',
 		'auth_check',
 		'auth_config_get',
@@ -414,6 +416,7 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 		'GET /api/backups/pending-restore',
 		'GET /api/attachments/{id}/download',
 		'GET /api/attachments/{id}/thumbnail',
+		'POST /api/calendar/list',
 		'POST /api/customers/list',
 		'POST /api/expenses/list',
 		'POST /api/invoices/list',

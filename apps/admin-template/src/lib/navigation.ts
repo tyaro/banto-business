@@ -11,6 +11,7 @@ import * as m from '$lib/paraglide/messages';
  *  this module stays UI-agnostic. */
 export type NavIconKey =
 	| 'dashboard'
+	| 'calendar'
 	| 'customers'
 	| 'projects'
 	| 'work-logs'
@@ -30,6 +31,7 @@ export type NavIconKey =
  *  so it tracks the active locale — see `pageTitle` below and Sidebar.svelte. */
 export type NavLabelKey =
 	| 'nav.dashboard'
+	| 'nav.calendar'
 	| 'nav.customers'
 	| 'nav.projects'
 	| 'nav.workLogs'
@@ -54,6 +56,9 @@ export interface NavItem {
 
 export const navItems: NavItem[] = [
 	{ path: '/dashboard', labelKey: 'nav.dashboard', icon: 'dashboard' },
+	// カレンダー（Phase 7 準備）。ダッシュボードと同じ「俯瞰する」画面なので
+	// 直後に置き、入力系（顧客・案件…）より前に出す。
+	{ path: '/calendar', labelKey: 'nav.calendar', icon: 'calendar' },
 	// Business ドメイン（Phase 2 基本マスター）。顧客 → 案件の順は
 	// docs/plan.md 第18章 Phase 2 の依存順（Customer → Project）に合わせる。
 	{ path: '/customers', labelKey: 'nav.customers', icon: 'customers' },

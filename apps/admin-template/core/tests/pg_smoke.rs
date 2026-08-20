@@ -25,6 +25,7 @@ use admin_template_core::invoices::{InvoiceInput, InvoiceLineInput, InvoicesServ
 use admin_template_core::issuer::{IssuerInput, IssuerService};
 use admin_template_core::masters::{CostRateInput, MastersService};
 use admin_template_core::payments::{PaymentAllocationInput, PaymentInput, PaymentsService};
+use admin_template_core::calendar::CalendarService;
 use admin_template_core::profitability::ProfitabilityService;
 use admin_template_core::projects::{ProjectInput, ProjectsService};
 use admin_template_core::settings::SettingsService;
@@ -405,6 +406,49 @@ async fn app_layer_crud_round_trips_on_postgres() {
     assert!(outstanding
         .iter()
         .all(|s| s.invoice_id != issued.invoice.id));
+
+    // --- 月カレンダー（Phase 7 準備）の集計 SQL を実 PostgreSQL で ---
+    // `profitability` と同じ理由でここに置く。カレンダーは 5 テーブルに
+    // またがって `SUM`/`COUNT` を掛けるので、`CAST(... AS BIGINT)` の抜けが
+    // あれば必ずここで落ちる。日付の閉区間（月初・月末）も実サーバの
+    // TEXT 比較で確かめる。
+    let calendar = CalendarService::new(db.clone());
+    let august = calendar
+        .month("2026-08")
+        .await
+        .expect("calendar on postgres");
+    let worked_day = august
+        .iter()
+        .find(|day| day.date == "2026-08-20")
+        .expect("2026-08-20 should carry the work logs and the expense");
+    assert_eq!(worked_day.worked_minutes, 900); // 600 + 300
+    assert_eq!(worked_day.work_log_count, 2);
+    assert_eq!(worked_day.projects.len(), 1);
+    assert_eq!(worked_day.projects[0].minutes, 900);
+    assert_eq!(worked_day.expense_count, 1);
+    assert_eq!(worked_day.expense_amount, 11_000); // 税込のまま
+
+    // 入金は 2026-09-30。月をまたいで正しく振り分けられているか。
+    let september = calendar
+        .month("2026-09")
+        .await
+        .expect("calendar on postgres");
+    let paid_day = september
+        .iter()
+        .find(|day| day.date == "2026-09-30")
+        .expect("2026-09-30 should carry the payment");
+    assert_eq!(paid_day.payment_count, 1);
+    assert!(paid_day.payment_amount > 0);
+    assert!(
+        august.iter().all(|day| day.payment_count == 0),
+        "the September payment must not leak into August"
+    );
+
+    // 月として読めない指定はエラー（空の月と区別する）。
+    assert!(
+        calendar.month("2026-13").await.is_err(),
+        "a malformed month must be rejected on postgres too"
+    );
 
     invoices
         .cancel(issued.invoice.id)

@@ -1,4 +1,5 @@
 use super::*;
+use crate::calendar::CalendarService;
 use crate::customers::CustomersService;
 use crate::db::migrate_memory;
 use crate::expenses::ExpensesService;
@@ -81,6 +82,7 @@ async fn router_with_role_tokens() -> (Router, String, String, String) {
     let expenses = ExpensesService::new(pool.clone());
     let trips = TripsService::new(pool.clone());
     let profitability = ProfitabilityService::new(pool.clone());
+    let calendar = CalendarService::new(pool.clone());
     let invoices = InvoicesService::new(pool.clone());
     let payments = PaymentsService::new(pool.clone());
     let issuer = IssuerService::new(SettingsService::new(pool.clone()));
@@ -140,6 +142,7 @@ async fn router_with_role_tokens() -> (Router, String, String, String) {
         expenses,
         trips,
         profitability,
+        calendar,
         invoices,
         issuer,
         payments,
@@ -167,6 +170,7 @@ async fn router_with_token() -> (Router, String) {
     let expenses = ExpensesService::new(pool.clone());
     let trips = TripsService::new(pool.clone());
     let profitability = ProfitabilityService::new(pool.clone());
+    let calendar = CalendarService::new(pool.clone());
     let invoices = InvoicesService::new(pool.clone());
     let payments = PaymentsService::new(pool.clone());
     let issuer = IssuerService::new(SettingsService::new(pool.clone()));
@@ -190,6 +194,7 @@ async fn router_with_token() -> (Router, String) {
         expenses,
         trips,
         profitability,
+        calendar,
         invoices,
         issuer,
         payments,
@@ -254,6 +259,7 @@ async fn update_via_rest_is_observable_on_the_event_channel() {
     let expenses = ExpensesService::new(pool.clone());
     let trips = TripsService::new(pool.clone());
     let profitability = ProfitabilityService::new(pool.clone());
+    let calendar = CalendarService::new(pool.clone());
     let invoices = InvoicesService::new(pool.clone());
     let payments = PaymentsService::new(pool.clone());
     let issuer = IssuerService::new(SettingsService::new(pool.clone()));
@@ -273,6 +279,7 @@ async fn update_via_rest_is_observable_on_the_event_channel() {
         expenses,
         trips,
         profitability,
+        calendar,
         invoices,
         issuer,
         payments,
@@ -350,6 +357,7 @@ async fn router_with_setup(allow_setup: bool) -> Router {
     let expenses = ExpensesService::new(pool.clone());
     let trips = TripsService::new(pool.clone());
     let profitability = ProfitabilityService::new(pool.clone());
+    let calendar = CalendarService::new(pool.clone());
     let invoices = InvoicesService::new(pool.clone());
     let payments = PaymentsService::new(pool.clone());
     let issuer = IssuerService::new(SettingsService::new(pool.clone()));
@@ -369,6 +377,7 @@ async fn router_with_setup(allow_setup: bool) -> Router {
         expenses,
         trips,
         profitability,
+        calendar,
         invoices,
         issuer,
         payments,
@@ -573,6 +582,7 @@ async fn router_with_real_login(allow_setup: bool) -> (Router, AuditLogService) 
     let expenses = ExpensesService::new(pool.clone());
     let trips = TripsService::new(pool.clone());
     let profitability = ProfitabilityService::new(pool.clone());
+    let calendar = CalendarService::new(pool.clone());
     let invoices = InvoicesService::new(pool.clone());
     let payments = PaymentsService::new(pool.clone());
     let issuer = IssuerService::new(SettingsService::new(pool.clone()));
@@ -592,6 +602,7 @@ async fn router_with_real_login(allow_setup: bool) -> (Router, AuditLogService) 
         expenses,
         trips,
         profitability,
+        calendar,
         invoices,
         issuer,
         payments,
@@ -939,6 +950,7 @@ async fn router_with_role_tokens_and_audit() -> (Router, AuditLogService, String
     let expenses = ExpensesService::new(pool.clone());
     let trips = TripsService::new(pool.clone());
     let profitability = ProfitabilityService::new(pool.clone());
+    let calendar = CalendarService::new(pool.clone());
     let invoices = InvoicesService::new(pool.clone());
     let payments = PaymentsService::new(pool.clone());
     let issuer = IssuerService::new(SettingsService::new(pool.clone()));
@@ -985,6 +997,7 @@ async fn router_with_role_tokens_and_audit() -> (Router, AuditLogService, String
         expenses,
         trips,
         profitability,
+        calendar,
         invoices,
         issuer,
         payments,
@@ -1036,6 +1049,7 @@ async fn router_with_role_tokens_and_backup() -> (Router, tempfile::TempDir, Str
     let expenses = ExpensesService::new(db.clone());
     let trips = TripsService::new(db.clone());
     let profitability = ProfitabilityService::new(db.clone());
+    let calendar = CalendarService::new(db.clone());
     let invoices = InvoicesService::new(db.clone());
     let payments = PaymentsService::new(db.clone());
     let issuer = IssuerService::new(SettingsService::new(db.clone()));
@@ -1083,6 +1097,7 @@ async fn router_with_role_tokens_and_backup() -> (Router, tempfile::TempDir, Str
         expenses,
         trips,
         profitability,
+        calendar,
         invoices,
         issuer,
         payments,
@@ -2149,6 +2164,7 @@ async fn attachment_upload_and_delete_are_observable_on_the_event_channel() {
     let expenses = ExpensesService::new(pool.clone());
     let trips = TripsService::new(pool.clone());
     let profitability = ProfitabilityService::new(pool.clone());
+    let calendar = CalendarService::new(pool.clone());
     let invoices = InvoicesService::new(pool.clone());
     let payments = PaymentsService::new(pool.clone());
     let issuer = IssuerService::new(SettingsService::new(pool.clone()));
@@ -2170,6 +2186,7 @@ async fn attachment_upload_and_delete_are_observable_on_the_event_channel() {
         expenses,
         trips,
         profitability,
+        calendar,
         invoices,
         issuer,
         payments,
@@ -2628,6 +2645,117 @@ async fn profitability_of_an_unknown_project_is_not_found() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+// --- Business ドメイン（Phase 7 準備：月カレンダー）の読み取り経路 ---
+
+/// カレンダーは viewer でも読める（読み取りは認証のみ。conventions §1）。
+/// 行は日付順で、何も無い日は返らない。
+#[tokio::test]
+async fn viewer_can_read_the_month_calendar() {
+    let (router, _admin, editor, viewer) = router_with_role_tokens().await;
+    let project_id = seed_project(&router, &editor).await;
+
+    for (worked_on, minutes) in [("2026-08-20", 600), ("2026-08-03", 120)] {
+        let response = router
+            .clone()
+            .oneshot(post_json_auth(
+                "/api/work_logs",
+                &editor,
+                json!({
+                    "projectId": project_id,
+                    "workedOn": worked_on,
+                    "workCategoryCode": "DESIGN",
+                    "minutes": minutes
+                }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{worked_on}");
+    }
+
+    let response = router
+        .clone()
+        .oneshot(post_json_auth(
+            "/api/calendar/list",
+            &viewer,
+            json!({
+                "sort": [],
+                "filters": [{ "field": "month", "op": "eq", "value": "2026-08" }]
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_json(response).await;
+    let rows = body["rows"].as_array().expect("rows");
+    assert_eq!(body["totalCount"], 2);
+    // 日付順（`BTreeMap` のキー順）。行の id は日付そのもの。
+    assert_eq!(rows[0]["date"], "2026-08-03");
+    assert_eq!(rows[0]["id"], "2026-08-03");
+    assert_eq!(rows[0]["workedMinutes"], 120);
+    assert_eq!(rows[1]["date"], "2026-08-20");
+    assert_eq!(rows[1]["workedMinutes"], 600);
+    assert_eq!(rows[1]["projects"][0]["projectId"], project_id);
+}
+
+/// 月フィルタが無ければ 422。既定で「今月」に倒すと、指定漏れが黙って
+/// 別の月を返す形で表に出る。
+#[tokio::test]
+async fn the_calendar_requires_a_month_filter() {
+    let (router, _admin, _editor, viewer) = router_with_role_tokens().await;
+    let response = router
+        .oneshot(post_json_auth(
+            "/api/calendar/list",
+            &viewer,
+            json!({ "sort": [], "filters": [] }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body = body_json(response).await;
+    assert_eq!(body["kind"], "validation");
+}
+
+/// 月として読めない指定も 422（「その月にデータが無い」と区別する）。
+#[tokio::test]
+async fn a_malformed_calendar_month_is_rejected() {
+    let (router, _admin, _editor, viewer) = router_with_role_tokens().await;
+    let response = router
+        .oneshot(post_json_auth(
+            "/api/calendar/list",
+            &viewer,
+            json!({
+                "sort": [],
+                "filters": [{ "field": "month", "op": "eq", "value": "2026-13" }]
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+/// 読み取りルートなのでトークンが要る（`require_auth`）。
+#[tokio::test]
+async fn the_calendar_route_requires_a_token() {
+    let (router, _token) = router_with_token().await;
+    let response = router
+        .oneshot(
+            HttpRequest::post("/api/calendar/list")
+                .header(CLIENT_HEADER.0, CLIENT_HEADER.1)
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "sort": [],
+                        "filters": [{ "field": "month", "op": "eq", "value": "2026-08" }]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
 // --- Business ドメイン（Phase 5 請求）の両経路対称テスト ---

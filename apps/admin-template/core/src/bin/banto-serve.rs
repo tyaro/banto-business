@@ -34,6 +34,7 @@
 use admin_template_core::assets::FrontendAssets;
 use admin_template_core::audit::{AuditEntry, AuditLogService};
 use admin_template_core::backup::BackupService;
+use admin_template_core::calendar::CalendarService;
 use admin_template_core::customers::CustomersService;
 use admin_template_core::db::{init_db_from_target, is_postgres_url};
 use admin_template_core::events::event_channel;
@@ -123,6 +124,8 @@ async fn main() {
     let trips = TripsService::new(db.clone()).with_events(events.clone());
     // 採算は導出専用（変更が無いので `with_events` を持たない）。
     let profitability = ProfitabilityService::new(db.clone());
+    // Phase 7 準備（月カレンダー）。読み取り専用なのでイベント送信器は付けない。
+    let calendar = CalendarService::new(db.clone());
     let invoices = InvoicesService::new(db.clone()).with_events(events.clone());
     let payments = PaymentsService::new(db.clone()).with_events(events.clone());
     let users = UsersService::new(db.clone());
@@ -201,6 +204,7 @@ async fn main() {
         expenses,
         trips,
         profitability,
+        calendar,
         invoices,
         issuer,
         payments,
