@@ -1,5 +1,7 @@
 use super::*;
+use crate::customers::CustomersService;
 use crate::db::migrate_memory;
+use crate::projects::ProjectsService;
 use axum::body::Body;
 use axum::http::Request as HttpRequest;
 use banto_core::{BantoError, FilterOp, FilterState, Pagination, SortDirection, SortState};
@@ -65,6 +67,8 @@ fn demo_auth() -> AuthState {
 /// below.
 async fn router_with_role_tokens() -> (Router, String, String, String) {
     let pool = migrate_memory().await.expect("migrate_memory");
+    let customers = CustomersService::new(pool.clone());
+    let projects = ProjectsService::new(pool.clone());
     let (tx, _rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
     let users = UsersService::new(pool.clone());
@@ -116,6 +120,8 @@ async fn router_with_role_tokens() -> (Router, String, String, String) {
         .expect("viewer login");
     let services = Services {
         items,
+        customers,
+        projects,
         users,
         settings,
         audit,
@@ -133,6 +139,8 @@ async fn router_with_role_tokens() -> (Router, String, String, String) {
 
 async fn router_with_token() -> (Router, String) {
     let pool = migrate_memory().await.expect("migrate_memory");
+    let customers = CustomersService::new(pool.clone());
+    let projects = ProjectsService::new(pool.clone());
     let (tx, _rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
     let users = UsersService::new(pool.clone());
@@ -148,6 +156,8 @@ async fn router_with_token() -> (Router, String) {
         .expect("login should succeed");
     let services = Services {
         items,
+        customers,
+        projects,
         users,
         settings,
         audit,
@@ -350,6 +360,8 @@ async fn missing_csrf_header_is_forbidden_even_with_a_token() {
 #[tokio::test]
 async fn update_via_rest_is_observable_on_the_event_channel() {
     let pool = migrate_memory().await.expect("migrate_memory");
+    let customers = CustomersService::new(pool.clone());
+    let projects = ProjectsService::new(pool.clone());
     let (tx, mut rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
     let users = UsersService::new(pool.clone());
@@ -362,6 +374,8 @@ async fn update_via_rest_is_observable_on_the_event_channel() {
     let token = auth.login("admin", "admin").await.unwrap();
     let services = Services {
         items,
+        customers,
+        projects,
         users,
         settings,
         audit,
@@ -424,6 +438,8 @@ fn error_kind_used_in_tests_matches_banto_core() {
 
 async fn router_with_setup(allow_setup: bool) -> Router {
     let pool = migrate_memory().await.expect("migrate_memory");
+    let customers = CustomersService::new(pool.clone());
+    let projects = ProjectsService::new(pool.clone());
     let (tx, _rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
     let users = UsersService::new(pool.clone());
@@ -435,6 +451,8 @@ async fn router_with_setup(allow_setup: bool) -> Router {
     let auth = demo_auth();
     let services = Services {
         items,
+        customers,
+        projects,
         users,
         settings,
         audit,
@@ -629,6 +647,8 @@ async fn auth_change_password_rejects_wrong_current_password() {
 /// pool, so M14 tests can assert on what got recorded.
 async fn router_with_real_login(allow_setup: bool) -> (Router, AuditLogService) {
     let pool = migrate_memory().await.expect("migrate_memory");
+    let customers = CustomersService::new(pool.clone());
+    let projects = ProjectsService::new(pool.clone());
     let (tx, _rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
     let users = UsersService::new(pool.clone());
@@ -640,6 +660,8 @@ async fn router_with_real_login(allow_setup: bool) -> (Router, AuditLogService) 
     let auth = AuthState::new(audited_credential_verifier(users.clone(), audit.clone()));
     let services = Services {
         items,
+        customers,
+        projects,
         users,
         settings,
         audit: audit.clone(),
@@ -1075,6 +1097,8 @@ async fn ui_settings_routes_are_unauthorized_without_a_token() {
 ///   events.
 async fn router_with_role_tokens_and_audit() -> (Router, AuditLogService, String, String, String) {
     let pool = migrate_memory().await.expect("migrate_memory");
+    let customers = CustomersService::new(pool.clone());
+    let projects = ProjectsService::new(pool.clone());
     let (tx, _rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
     let users = UsersService::new(pool.clone());
@@ -1113,6 +1137,8 @@ async fn router_with_role_tokens_and_audit() -> (Router, AuditLogService, String
 
     let services = Services {
         items,
+        customers,
+        projects,
         users,
         settings,
         audit: audit.clone(),
@@ -1154,6 +1180,8 @@ async fn router_with_role_tokens_and_backup() -> (Router, tempfile::TempDir, Str
     // V2 PR2: services take a backend-agnostic `Db`; wrap the on-disk SQLite
     // pool (a real file is required here so `VACUUM INTO` actually writes).
     let db = banto_storage::Db::Sqlite(pool);
+    let customers = CustomersService::new(db.clone());
+    let projects = ProjectsService::new(db.clone());
 
     let (tx, _rx) = broadcast::channel(16);
     let items = ItemsService::new(db.clone()).with_events(tx.clone());
@@ -1193,6 +1221,8 @@ async fn router_with_role_tokens_and_backup() -> (Router, tempfile::TempDir, Str
 
     let services = Services {
         items,
+        customers,
+        projects,
         users,
         settings,
         audit,
@@ -2382,6 +2412,8 @@ async fn attachment_upload_and_delete_are_recorded_in_the_audit_log() {
 #[tokio::test]
 async fn attachment_upload_and_delete_are_observable_on_the_event_channel() {
     let pool = migrate_memory().await.expect("migrate_memory");
+    let customers = CustomersService::new(pool.clone());
+    let projects = ProjectsService::new(pool.clone());
     let (tx, mut rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
     let users = UsersService::new(pool.clone());
@@ -2395,6 +2427,8 @@ async fn attachment_upload_and_delete_are_observable_on_the_event_channel() {
     let token = auth.login("admin", "admin").await.unwrap();
     let services = Services {
         items,
+        customers,
+        projects,
         users,
         settings,
         audit,
@@ -2425,4 +2459,167 @@ async fn attachment_upload_and_delete_are_observable_on_the_event_channel() {
     assert!(
         matches!(event, ServerEvent::ResourceChanged { resource } if resource == "attachments")
     );
+}
+
+// --- Business ドメイン（Phase 2 基本マスター）の両経路対称テスト ---
+//
+// conventions §1: mutating は REST / Tauri 両経路で同一の認可・監査を通す。
+// ここは REST 側の担保（Tauri 側は `src-tauri` の同名テスト）。読み取りは
+// 認証のみで通り、監査しない。
+
+/// 顧客の作成に必要なフォーム値（サービス層の検証を通る最小構成）。
+fn customer_payload(code: &str) -> serde_json::Value {
+    json!({
+        "code": code,
+        "name": "架空商事",
+        "closingDay": 99,
+        "paymentMonthOffset": 1,
+        "paymentDay": 99
+    })
+}
+
+#[tokio::test]
+async fn viewer_can_read_customers_and_projects() {
+    let (router, _admin, _editor, viewer) = router_with_role_tokens().await;
+
+    for path in ["/api/customers/list", "/api/projects/list"] {
+        let response = router
+            .clone()
+            .oneshot(post_json_auth(path, &viewer, json!(ListParams::default())))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{path}");
+    }
+}
+
+#[tokio::test]
+async fn viewer_cannot_write_customers_or_projects() {
+    let (router, _admin, _editor, viewer) = router_with_role_tokens().await;
+
+    let create = router
+        .clone()
+        .oneshot(post_json_auth(
+            "/api/customers",
+            &viewer,
+            customer_payload("C001"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(create.status(), StatusCode::FORBIDDEN);
+    assert_eq!(body_json(create).await["kind"], "forbidden");
+
+    let create_project = router
+        .clone()
+        .oneshot(post_json_auth(
+            "/api/projects",
+            &viewer,
+            json!({ "customerId": 1, "name": "架空案件", "status": "ORDERED" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(create_project.status(), StatusCode::FORBIDDEN);
+
+    let delete = router
+        .oneshot(delete_auth("/api/customers/1", &viewer))
+        .await
+        .unwrap();
+    assert_eq!(delete.status(), StatusCode::FORBIDDEN);
+}
+
+/// 顧客 → 案件の作成が editor で通り、監査が両方に残ること。
+#[tokio::test]
+async fn editor_can_create_customer_then_project_and_both_are_audited() {
+    let (router, admin, editor, _viewer) = router_with_role_tokens().await;
+
+    let created_customer = router
+        .clone()
+        .oneshot(post_json_auth(
+            "/api/customers",
+            &editor,
+            customer_payload("C001"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(created_customer.status(), StatusCode::OK);
+    let customer = body_json(created_customer).await;
+    assert_eq!(customer["code"], "C001");
+
+    let created_project = router
+        .clone()
+        .oneshot(post_json_auth(
+            "/api/projects",
+            &editor,
+            json!({
+                "customerId": customer["id"],
+                "name": "架空ライン制御盤更新",
+                "status": "ORDERED",
+                "contractAmount": 1_200_000
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(created_project.status(), StatusCode::OK);
+    let project = body_json(created_project).await;
+    // 空の code は YYYY-NNN で自動採番される（要件 F-M3）。
+    assert!(
+        project["code"].as_str().unwrap().ends_with("-001"),
+        "auto numbered: {project:?}"
+    );
+
+    let audit = router
+        .oneshot(post_json_auth(
+            "/api/audit-log/list",
+            &admin,
+            json!(ListParams::default()),
+        ))
+        .await
+        .unwrap();
+    let rows = body_json(audit).await["rows"].clone();
+    let rows = rows.as_array().expect("rows");
+    for resource in ["customers", "projects"] {
+        assert!(
+            rows.iter()
+                .any(|r| r["action"] == "create" && r["resource"] == resource),
+            "expected a create/{resource} audit entry, got {rows:?}"
+        );
+    }
+}
+
+/// 顧客の削除は、案件が紐づいている間は 422（Validation）で拒否される。
+/// 外部キー任せの 500 にしないことがサービス層の設計判断（`customers.rs`）。
+#[tokio::test]
+async fn deleting_a_customer_with_projects_is_a_validation_error() {
+    let (router, _admin, editor, _viewer) = router_with_role_tokens().await;
+
+    let customer = body_json(
+        router
+            .clone()
+            .oneshot(post_json_auth(
+                "/api/customers",
+                &editor,
+                customer_payload("C001"),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    router
+        .clone()
+        .oneshot(post_json_auth(
+            "/api/projects",
+            &editor,
+            json!({ "customerId": customer["id"], "name": "架空案件", "status": "ORDERED" }),
+        ))
+        .await
+        .unwrap();
+
+    let response = router
+        .oneshot(delete_auth(
+            &format!("/api/customers/{}", customer["id"]),
+            &editor,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body_json(response).await["kind"], "validation");
 }

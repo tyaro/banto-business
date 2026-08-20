@@ -5,9 +5,11 @@
 //! services back the embedded REST server in M6.
 
 pub mod assets;
+pub mod customers;
 pub mod db;
 pub mod events;
 pub mod items;
+pub mod projects;
 pub mod rest;
 
 // Theme C (docs/template-scope.md §7): the domain-agnostic services moved to
