@@ -11,6 +11,7 @@
 //! counts_toward_profitability`] を使って行う — 画面やクエリで
 //! `status != "LOST"` を直書きしない。
 
+use crate::dates::is_valid_date;
 use banto_core::{BantoError, FieldError, ListParams, ListResult};
 use banto_server::ServerEvent;
 use banto_storage::{ColumnMap, Db, Dialect};
@@ -145,27 +146,6 @@ fn max_length_message(max: usize) -> String {
     format!("{max}文字以内で入力してください")
 }
 
-/// `YYYY-MM-DD` 形式かを検査する。日付ライブラリを足さない文化
-/// （conventions §3）に従い、桁と区切りと月日の範囲だけを見る。厳密な
-/// 実在日判定（2月30日等）はしない — 業務日付の入力補助はフロントの
-/// date 入力に任せ、ここは「別形式の文字列が DB に入らないこと」を担保する。
-fn is_iso_date(value: &str) -> bool {
-    let bytes = value.as_bytes();
-    if bytes.len() != 10 || bytes[4] != b'-' || bytes[7] != b'-' {
-        return false;
-    }
-    if !bytes
-        .iter()
-        .enumerate()
-        .all(|(i, b)| i == 4 || i == 7 || b.is_ascii_digit())
-    {
-        return false;
-    }
-    let month: u32 = value[5..7].parse().unwrap_or(0);
-    let day: u32 = value[8..10].parse().unwrap_or(0);
-    (1..=12).contains(&month) && (1..=31).contains(&day)
-}
-
 struct NormalizedProject {
     code: String,
     customer_id: i64,
@@ -207,7 +187,7 @@ fn check_optional_date(
     if trimmed.is_empty() {
         return None;
     }
-    if !is_iso_date(trimmed) {
+    if !is_valid_date(trimmed) {
         errors.push(FieldError {
             field: field.to_string(),
             message: "YYYY-MM-DD の形式で入力してください".to_string(),
@@ -271,7 +251,7 @@ fn validate(input: &ProjectInput) -> Result<NormalizedProject, BantoError> {
     // `YYYY-MM-DD` が辞書順 = 時系列順になるため（`CLAUDE.md` 第4章の
     // 日付表現を前提にした意図的な比較）。
     if let (Some(start), Some(due)) = (&started_on, &due_on) {
-        if is_iso_date(start) && is_iso_date(due) && start > due {
+        if is_valid_date(start) && is_valid_date(due) && start > due {
             errors.push(FieldError {
                 field: "dueOn".to_string(),
                 message: "終了予定日は開始日以降にしてください".to_string(),

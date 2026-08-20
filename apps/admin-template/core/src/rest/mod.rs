@@ -32,6 +32,25 @@
 //! | POST   | `/api/projects`      | `ProjectInput` | `Project` (editor+)     |
 //! | PUT    | `/api/projects/{id}` | `ProjectInput` | `Project` (editor+)     |
 //! | DELETE | `/api/projects/{id}` | -              | 204 (editor+)           |
+//! | GET    | `/api/work-categories` | -            | `WorkCategory[]` (any role) |
+//! | GET    | `/api/expense-categories` | -         | `ExpenseCategory[]` (any role) |
+//! | PUT    | `/api/cost-rates`    | `CostRateInput` | `WorkCategory` (editor+) |
+//! | POST   | `/api/work-logs/list` | `ListParams`  | `ListResult<WorkLog>` (any role) |
+//! | GET    | `/api/work-logs/{id}` | -            | `WorkLog` (any role)    |
+//! | POST   | `/api/work-logs`     | `WorkLogInput` | `WorkLog` (editor+)     |
+//! | PUT    | `/api/work-logs/{id}` | `WorkLogInput` | `WorkLog` (editor+)    |
+//! | DELETE | `/api/work-logs/{id}` | -            | 204 (editor+)           |
+//! | POST   | `/api/expenses/list` | `ListParams`   | `ListResult<Expense>` (any role) |
+//! | GET    | `/api/expenses/{id}` | -              | `Expense` (any role)    |
+//! | POST   | `/api/expenses`      | `ExpenseInput` | `Expense` (editor+)     |
+//! | PUT    | `/api/expenses/{id}` | `ExpenseInput` | `Expense` (editor+)     |
+//! | DELETE | `/api/expenses/{id}` | -              | 204 (editor+)           |
+//! | POST   | `/api/trips/list`    | `ListParams`   | `ListResult<Trip>` (any role) |
+//! | GET    | `/api/trips/{id}`    | -              | `Trip` (any role)       |
+//! | GET    | `/api/trips/{id}/linked-counts` | -  | 紐づく工数・経費の件数 (any role) |
+//! | POST   | `/api/trips`         | `TripInput`    | `TripGenerationResult` (editor+, 一括生成) |
+//! | PUT    | `/api/trips/{id}`    | `TripInput`    | `Trip` (editor+)        |
+//! | DELETE | `/api/trips/{id}`    | -              | 204 (editor+, 生成物は trip_id を NULL 化) |
 //! | GET    | `/api/users`         | -              | `UserSummary[]` (admin) |
 //! | POST   | `/api/users`         | `{username,password,displayName,role}` | `UserIdentityResponse` (admin) |
 //! | PUT    | `/api/users/{id}`    | `{displayName,role}` | `UserSummary` (admin) |
@@ -208,18 +227,26 @@ use tokio::sync::broadcast;
 use crate::audit::{AuditEntry, AuditLogService};
 use crate::backup::BackupService;
 use crate::customers::{Customer, CustomerInput, CustomersService};
+use crate::expenses::{Expense, ExpenseInput, ExpensesService};
 use crate::items::{ImportResult, Item, ItemImportRow, ItemInput, ItemsService};
+use crate::masters::{CostRateInput, ExpenseCategory, MastersService, WorkCategory};
 use crate::projects::{Project, ProjectInput, ProjectsService};
 use crate::settings::SettingsService;
 use crate::system_info::SystemInfoService;
+use crate::trips::{Trip, TripGenerationResult, TripInput, TripsService};
 use crate::users::{Role, UsersService};
+use crate::work_logs::{WorkLog, WorkLogInput, WorkLogsService};
 
 mod attachments;
 mod customers;
+mod expenses;
 mod items;
+mod masters;
 mod projects;
 #[cfg(test)]
 mod tests;
+mod trips;
+mod work_logs;
 
 // Theme C PR-C4 (docs/template-scope.md §7 移行順 ④): re-exported so
 // `admin_template_core::rest::audited_credential_verifier` - the path
@@ -230,8 +257,12 @@ pub use banto_server::routes::audited_credential_verifier;
 
 use attachments::attachments_router;
 use customers::customers_router;
+use expenses::expenses_router;
 use items::items_router;
+use masters::masters_router;
 use projects::projects_router;
+use trips::trips_router;
+use work_logs::work_logs_router;
 
 /// Slack added on top of `banto_attachments::MAX_ATTACHMENT_BYTES` for
 /// [`attachments_write_router`]'s `DefaultBodyLimit` (spec
@@ -260,6 +291,11 @@ pub struct Services {
     /// Business ドメイン（Phase 2 基本マスター）。
     pub customers: CustomersService,
     pub projects: ProjectsService,
+    /// Business ドメイン（Phase 3 工数・経費）。
+    pub masters: MastersService,
+    pub work_logs: WorkLogsService,
+    pub expenses: ExpensesService,
+    pub trips: TripsService,
     pub users: UsersService,
     pub settings: SettingsService,
     pub audit: AuditLogService,
@@ -290,6 +326,10 @@ pub fn api_router(
         items,
         customers,
         projects,
+        masters,
+        work_logs,
+        expenses,
+        trips,
         users,
         settings,
         audit,
@@ -323,6 +363,10 @@ pub fn api_router(
         ))
         .merge(customers_router(customers, audit.clone(), auth.clone()))
         .merge(projects_router(projects, audit.clone(), auth.clone()))
+        .merge(masters_router(masters, audit.clone(), auth.clone()))
+        .merge(work_logs_router(work_logs, audit.clone(), auth.clone()))
+        .merge(expenses_router(expenses, audit.clone(), auth.clone()))
+        .merge(trips_router(trips, audit.clone(), auth.clone()))
         .merge(users_router(users, audit.clone(), auth.clone()))
         .merge(audit_log_router(
             audit.clone(),
