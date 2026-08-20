@@ -25,6 +25,7 @@ use admin_template_core::invoices::{InvoiceInput, InvoiceLineInput, InvoicesServ
 use admin_template_core::issuer::{IssuerInput, IssuerService};
 use admin_template_core::items::{ImportResult, ItemImportRow, ItemInput, ItemsService};
 use admin_template_core::masters::{CostRateInput, MastersService};
+use admin_template_core::payments::{PaymentAllocationInput, PaymentInput, PaymentsService};
 use admin_template_core::profitability::ProfitabilityService;
 use admin_template_core::projects::{ProjectInput, ProjectsService};
 use admin_template_core::settings::SettingsService;
@@ -46,9 +47,9 @@ async fn reset_schema(url: &str) {
         // Business ドメイン（Phase 2〜）。テンプレート由来のテーブルだけを
         // 落としていると、2回目以降のローカル実行でマイグレーションが
         // 「既に存在する」で失敗する（CI は毎回新しいコンテナなので出ない）。
-        "DROP TABLE IF EXISTS invoice_tax_summaries, invoice_lines, invoices, expenses, \
-         work_logs, trips, cost_rates, work_categories, expense_categories, projects, \
-         customers CASCADE",
+        "DROP TABLE IF EXISTS payment_allocations, payments, invoice_tax_summaries, \
+         invoice_lines, invoices, expenses, work_logs, trips, cost_rates, work_categories, \
+         expense_categories, projects, customers CASCADE",
         "DROP TABLE IF EXISTS _sqlx_migrations",
     ] {
         sqlx::query(stmt)
@@ -512,6 +513,53 @@ async fn app_layer_crud_round_trips_on_postgres() {
         .await
         .expect("profitability after issue");
     assert_eq!(with_revenue.revenue, 110_005);
+
+    // --- Business ドメイン: 入金・消込（Phase 6）を実 PostgreSQL で ---
+    // 残額・入金状態・期限超過は列に持たず、相関サブクエリの SUM から導出する。
+    // ここも `CAST(... AS BIGINT)` が要る箇所なので、実サーバで確認する。
+    let payments = PaymentsService::new(db.clone());
+    let before = payments
+        .settlement(issued.invoice.id)
+        .await
+        .expect("settlement on postgres");
+    assert_eq!(before.total_amount, 120_805);
+    assert_eq!(before.remaining_amount, 120_805);
+    assert_eq!(before.settlement_status, "ISSUED");
+
+    // 先方が手数料 660 円を差し引いて入金した場合（決定 C-19）。
+    payments
+        .create(PaymentInput {
+            customer_id: customer.id,
+            paid_on: "2026-09-30".to_string(),
+            amount: 120_145,
+            method: Some("振込".to_string()),
+            note: None,
+            allocations: vec![PaymentAllocationInput {
+                invoice_id: issued.invoice.id,
+                allocated_amount: 120_145,
+                difference_reason: Some("TRANSFER_FEE".to_string()),
+                difference_amount: 660,
+                note: None,
+            }],
+        })
+        .await
+        .expect("payment on postgres");
+
+    let settled = payments
+        .settlement(issued.invoice.id)
+        .await
+        .expect("settlement after payment");
+    assert_eq!(settled.settled_amount, 120_805);
+    assert_eq!(settled.remaining_amount, 0);
+    assert_eq!(settled.settlement_status, "PAID");
+    // 完済したので未入金一覧には出ない（要件 F-Y7）。
+    let outstanding = payments
+        .outstanding()
+        .await
+        .expect("outstanding on postgres");
+    assert!(outstanding
+        .iter()
+        .all(|s| s.invoice_id != issued.invoice.id));
 
     invoices
         .cancel(issued.invoice.id)

@@ -5,6 +5,7 @@ use crate::expenses::ExpensesService;
 use crate::invoices::InvoicesService;
 use crate::issuer::IssuerService;
 use crate::masters::MastersService;
+use crate::payments::PaymentsService;
 use crate::projects::ProjectsService;
 use crate::trips::TripsService;
 use crate::work_logs::WorkLogsService;
@@ -81,6 +82,7 @@ async fn router_with_role_tokens() -> (Router, String, String, String) {
     let trips = TripsService::new(pool.clone());
     let profitability = ProfitabilityService::new(pool.clone());
     let invoices = InvoicesService::new(pool.clone());
+    let payments = PaymentsService::new(pool.clone());
     let issuer = IssuerService::new(SettingsService::new(pool.clone()));
     let (tx, _rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
@@ -142,6 +144,7 @@ async fn router_with_role_tokens() -> (Router, String, String, String) {
         profitability,
         invoices,
         issuer,
+        payments,
         users,
         settings,
         audit,
@@ -167,6 +170,7 @@ async fn router_with_token() -> (Router, String) {
     let trips = TripsService::new(pool.clone());
     let profitability = ProfitabilityService::new(pool.clone());
     let invoices = InvoicesService::new(pool.clone());
+    let payments = PaymentsService::new(pool.clone());
     let issuer = IssuerService::new(SettingsService::new(pool.clone()));
     let (tx, _rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
@@ -192,6 +196,7 @@ async fn router_with_token() -> (Router, String) {
         profitability,
         invoices,
         issuer,
+        payments,
         users,
         settings,
         audit,
@@ -402,6 +407,7 @@ async fn update_via_rest_is_observable_on_the_event_channel() {
     let trips = TripsService::new(pool.clone());
     let profitability = ProfitabilityService::new(pool.clone());
     let invoices = InvoicesService::new(pool.clone());
+    let payments = PaymentsService::new(pool.clone());
     let issuer = IssuerService::new(SettingsService::new(pool.clone()));
     let (tx, mut rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
@@ -424,6 +430,7 @@ async fn update_via_rest_is_observable_on_the_event_channel() {
         profitability,
         invoices,
         issuer,
+        payments,
         users,
         settings,
         audit,
@@ -494,6 +501,7 @@ async fn router_with_setup(allow_setup: bool) -> Router {
     let trips = TripsService::new(pool.clone());
     let profitability = ProfitabilityService::new(pool.clone());
     let invoices = InvoicesService::new(pool.clone());
+    let payments = PaymentsService::new(pool.clone());
     let issuer = IssuerService::new(SettingsService::new(pool.clone()));
     let (tx, _rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
@@ -515,6 +523,7 @@ async fn router_with_setup(allow_setup: bool) -> Router {
         profitability,
         invoices,
         issuer,
+        payments,
         users,
         settings,
         audit,
@@ -717,6 +726,7 @@ async fn router_with_real_login(allow_setup: bool) -> (Router, AuditLogService) 
     let trips = TripsService::new(pool.clone());
     let profitability = ProfitabilityService::new(pool.clone());
     let invoices = InvoicesService::new(pool.clone());
+    let payments = PaymentsService::new(pool.clone());
     let issuer = IssuerService::new(SettingsService::new(pool.clone()));
     let (tx, _rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
@@ -738,6 +748,7 @@ async fn router_with_real_login(allow_setup: bool) -> (Router, AuditLogService) 
         profitability,
         invoices,
         issuer,
+        payments,
         users,
         settings,
         audit: audit.clone(),
@@ -1192,6 +1203,7 @@ async fn router_with_role_tokens_and_audit() -> (Router, AuditLogService, String
     let trips = TripsService::new(pool.clone());
     let profitability = ProfitabilityService::new(pool.clone());
     let invoices = InvoicesService::new(pool.clone());
+    let payments = PaymentsService::new(pool.clone());
     let issuer = IssuerService::new(SettingsService::new(pool.clone()));
     let (tx, _rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
@@ -1240,6 +1252,7 @@ async fn router_with_role_tokens_and_audit() -> (Router, AuditLogService, String
         profitability,
         invoices,
         issuer,
+        payments,
         users,
         settings,
         audit: audit.clone(),
@@ -1289,6 +1302,7 @@ async fn router_with_role_tokens_and_backup() -> (Router, tempfile::TempDir, Str
     let trips = TripsService::new(db.clone());
     let profitability = ProfitabilityService::new(db.clone());
     let invoices = InvoicesService::new(db.clone());
+    let payments = PaymentsService::new(db.clone());
     let issuer = IssuerService::new(SettingsService::new(db.clone()));
 
     let (tx, _rx) = broadcast::channel(16);
@@ -1338,6 +1352,7 @@ async fn router_with_role_tokens_and_backup() -> (Router, tempfile::TempDir, Str
         profitability,
         invoices,
         issuer,
+        payments,
         users,
         settings,
         audit,
@@ -2535,6 +2550,7 @@ async fn attachment_upload_and_delete_are_observable_on_the_event_channel() {
     let trips = TripsService::new(pool.clone());
     let profitability = ProfitabilityService::new(pool.clone());
     let invoices = InvoicesService::new(pool.clone());
+    let payments = PaymentsService::new(pool.clone());
     let issuer = IssuerService::new(SettingsService::new(pool.clone()));
     let (tx, mut rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
@@ -2558,6 +2574,7 @@ async fn attachment_upload_and_delete_are_observable_on_the_event_channel() {
         profitability,
         invoices,
         issuer,
+        payments,
         users,
         settings,
         audit,
@@ -3218,4 +3235,126 @@ async fn viewer_can_build_invoice_candidates() {
     // seed_project の案件は請求単価が未設定なので金額 0 で出る（画面で入力を促す）。
     assert!(rows[0]["billingHourlyRate"].is_null(), "{candidates}");
     assert_eq!(rows[0]["amount"], 0);
+}
+
+// --- Business ドメイン（Phase 6 入金管理）の両経路対称テスト ---
+
+/// 入金の登録と消込が REST 経由で動き、請求書の残額・入金状態が導出される。
+#[tokio::test]
+async fn editor_records_a_payment_and_the_invoice_settles() {
+    let (router, _admin, editor, viewer) = router_with_role_tokens().await;
+    let project_id = seed_project(&router, &editor).await;
+    let customers = body_json(
+        router
+            .clone()
+            .oneshot(post_json_auth(
+                "/api/customers/list",
+                &viewer,
+                json!(ListParams::default()),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let customer_id = customers["rows"][0]["id"].as_i64().expect("customer id");
+
+    let created = body_json(
+        router
+            .clone()
+            .oneshot(post_json_auth(
+                "/api/invoices",
+                &editor,
+                json!({
+                    "customerId": customer_id,
+                    "lines": [{
+                        "projectId": project_id,
+                        "itemName": "設計",
+                        "quantity": 1,
+                        "unitPrice": 100_000,
+                        "taxCategory": "STANDARD_10"
+                    }]
+                }),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let invoice_id = created["id"].as_i64().expect("invoice id");
+    let issued = body_json(
+        router
+            .clone()
+            .oneshot(post_json_auth(
+                &format!("/api/invoices/{invoice_id}/issue"),
+                &editor,
+                json!({}),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(issued["totalAmount"], 110_000);
+
+    // 先方が手数料 660 円を差し引いて入金（決定 C-19: 差額で請求書を閉じる）。
+    let payment = body_json(
+        router
+            .clone()
+            .oneshot(post_json_auth(
+                "/api/payments",
+                &editor,
+                json!({
+                    "customerId": customer_id,
+                    "paidOn": "2026-09-30",
+                    "amount": 109_340,
+                    "allocations": [{
+                        "invoiceId": invoice_id,
+                        "allocatedAmount": 109_340,
+                        "differenceReason": "TRANSFER_FEE",
+                        "differenceAmount": 660
+                    }]
+                }),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(payment["unallocatedAmount"], 0);
+
+    let settlement = body_json(
+        router
+            .clone()
+            .oneshot(get_auth(&format!("/api/settlements/{invoice_id}"), &viewer))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(settlement["settledAmount"], 110_000);
+    assert_eq!(settlement["remainingAmount"], 0);
+    assert_eq!(settlement["settlementStatus"], "PAID");
+    assert_eq!(settlement["overdue"], false);
+
+    // 完済したので未入金一覧には出ない（要件 F-Y7）。
+    let outstanding = body_json(
+        router
+            .clone()
+            .oneshot(post_json_auth(
+                "/api/outstanding/list",
+                &viewer,
+                json!(ListParams::default()),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(outstanding["totalCount"], 0);
+
+    // viewer は読めるが書けない。
+    let denied = router
+        .oneshot(post_json_auth(
+            "/api/payments",
+            &viewer,
+            json!({ "customerId": customer_id, "paidOn": "2026-09-30", "amount": 1_000 }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
 }

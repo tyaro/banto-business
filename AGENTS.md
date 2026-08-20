@@ -264,7 +264,7 @@ apt-get update -qq && apt-get install -y \
 
 ## 7. Phase 進行
 
-現在の Phase：**Phase 6（入金管理）着手可**
+現在の Phase：**Phase 7（実運用評価）着手可**
 
 | Phase | 内容                                   | 状態   |
 | ----- | -------------------------------------- | ------ |
@@ -274,8 +274,8 @@ apt-get update -qq && apt-get install -y \
 | 3     | 工数・経費（WorkLog / Trip / Expense） | 完了   |
 | 4     | 採算管理                               | 完了   |
 | 5     | 請求（Invoice / PDF）                  | 完了   |
-| 6     | 入金管理（Payment）                    | 着手可 |
-| 7     | 実運用評価                             | 未着手 |
+| 6     | 入金管理（Payment）                    | 完了   |
+| 7     | 実運用評価                             | 着手可 |
 
 Phase 1 の成果物は `docs/domain/`（requirements / er-diagram / schema / state-machine / glossary / open-questions）にあり、未決事項はゼロ。`docs/tax-calculation.md` も確定済み。
 
@@ -285,7 +285,12 @@ Phase 4 着手時に1件（C-16：経費を採算に計上するときの税抜�
 （1円未満切捨て、行ごとに1回）。
 
 Phase 5 着手時にも2件（C-17：工数の請求時間単価の出どころ、C-18：立替経費の
-再請求額）が判明し、決定として記録した。**請求時間単価は案件マスタ
+再請求額）が判明し、決定として記録した。
+
+Phase 6 着手時にも1件（C-19：差額が請求書を消し込むか）が判明し、決定として
+記録した。**振込手数料は原則先方負担**なので差し引かれるのは例外だが、例外時に
+理由コード付きで記録して請求書を閉じられるようにしてある。残額・入金状態・
+期限超過は**すべて導出値**で列に持たない（`CLAUDE.md` 1.5）。**請求時間単価は案件マスタ
 （`projects.billing_hourly_rate`）から取る。内部原価の `cost_rates` を請求に
 流用しない**（原価と売上が同じ数字になり粗利が常にゼロになる）。
 
@@ -294,7 +299,7 @@ InvoiceLine 合計**として集計する（Draft と取消済みは立たない
 
 **リソース識別子は Rust の識別子として妥当な綴りにする**（`work_logs` / `cost_rates`）。`@banto/admin-core` の DataProvider が Tauri コマンドを `${resource}_list` の規約で呼ぶため、ハイフンを含む名前はコマンドを定義できない（`docs/banto-feedback.md` に記録）。画面の URL は `/work-logs` のようにケバブケースで構わない。
 
-Phase 5 までで `docs/banto-feedback.md` に12件記録済み。**`items` デモの削除は未実施**（Phase 4 以降の任意のタイミングで行う。もう手本としては使わない）。
+Phase 6 までで `docs/banto-feedback.md` に13件記録済み。**`items` デモの削除は未実施**（Phase 4 以降の任意のタイミングで行う。もう手本としては使わない）。
 
 **Phase 1 が確定するまで Phase 2 以降のテーブルを先行実装しない。**
 

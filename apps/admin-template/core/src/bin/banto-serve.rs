@@ -42,6 +42,7 @@ use admin_template_core::invoices::InvoicesService;
 use admin_template_core::issuer::IssuerService;
 use admin_template_core::items::ItemsService;
 use admin_template_core::masters::MastersService;
+use admin_template_core::payments::PaymentsService;
 use admin_template_core::profitability::ProfitabilityService;
 use admin_template_core::projects::ProjectsService;
 use admin_template_core::rest::{api_router, audited_credential_verifier, Services};
@@ -125,6 +126,7 @@ async fn main() {
     // 採算は導出専用（変更が無いので `with_events` を持たない）。
     let profitability = ProfitabilityService::new(db.clone());
     let invoices = InvoicesService::new(db.clone()).with_events(events.clone());
+    let payments = PaymentsService::new(db.clone()).with_events(events.clone());
     let users = UsersService::new(db.clone());
     let settings = SettingsService::new(db.clone());
     // 発行者情報は Banto の `settings` を入れ物として使う（専用テーブルを
@@ -204,6 +206,7 @@ async fn main() {
         profitability,
         invoices,
         issuer,
+        payments,
         users,
         settings,
         audit,
