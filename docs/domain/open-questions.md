@@ -308,6 +308,25 @@ Customer の「締日」「支払条件」から Invoice の支払期限を計�
 
 ---
 
+### C-15 Invoice の入金状態をカラムで持つか — **P0**（成果物作成中に判明）
+
+`AGENTS.md` 3.6 の状態遷移は `Draft → Issued → PartiallyPaid ⇄ Paid / Cancelled` だが、`PartiallyPaid` / `Paid` は**消込の結果から導出できる**。カラムで持つと `PaymentAllocation` の追加・取消のたびに更新が必要になり、不整合が起きうる。
+
+- **決定（2026-08-20）：`status` カラムには `DRAFT` / `ISSUED` / `CANCELLED` のみ保持し、`PartiallyPaid` / `Paid` は残額から導出する。**
+
+  ```
+  表示状態 :=
+      status = DRAFT      → Draft
+      status = CANCELLED  → Cancelled
+      status = ISSUED かつ 残額 = 0        → Paid
+      status = ISSUED かつ 充当額合計 > 0  → PartiallyPaid
+      status = ISSUED かつ 充当額合計 = 0  → Issued
+  ```
+
+  `Overdue` を導出値にしたのと同じ理由（`CLAUDE.md` 1.5）。表示上の状態名は `AGENTS.md` 3.6 のまま変わらない。
+
+---
+
 ## D. 運用・環境
 
 ### D-1 利用者 — **P2**
