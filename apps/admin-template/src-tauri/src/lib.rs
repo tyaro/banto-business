@@ -23,9 +23,11 @@ mod keyring_store;
 use admin_template_core::assets::FrontendAssets;
 use admin_template_core::audit::{AuditEntry, AuditLogEntry, AuditLogService};
 use admin_template_core::backup::{BackupInfo, BackupService, PendingRestoreInfo};
+use admin_template_core::customers::{Customer, CustomerInput, CustomersService};
 use admin_template_core::db::init_db;
 use admin_template_core::events::event_channel;
 use admin_template_core::items::{ImportResult, Item, ItemImportRow, ItemInput, ItemsService};
+use admin_template_core::projects::{Project, ProjectInput, ProjectsService};
 use admin_template_core::rest::{api_router, audited_credential_verifier, Services};
 use admin_template_core::settings::{AuditSettings, AuthSettings, ServerSettings, SettingsService};
 use admin_template_core::system_info::SystemInfoService;
@@ -49,6 +51,11 @@ use tokio::sync::{broadcast, Mutex as AsyncMutex};
 /// App-wide state managed by Tauri (spec §10, §11).
 struct AppState {
     items: ItemsService,
+    /// Business ドメイン（Phase 2 基本マスター、docs/domain/schema.md §2）。
+    /// `items` と同じく、変更は `events` に流れて webview と LAN ブラウザの
+    /// 両方へ配信される。
+    customers: CustomersService,
+    projects: ProjectsService,
     /// The webview window's own session identity, set by `auth_login`/
     /// `auth_setup` and cleared by `auth_logout` - all called directly via
     /// `invoke()`, never through `/api/auth/login`. `Some` means logged in;
@@ -265,6 +272,153 @@ fn ping() -> &'static str {
 
 /// Read-only (spec M10 RBAC): any authenticated role (`viewer` and up), so
 /// `require_role`'s floor is the least-privileged role.
+// --- Business ドメイン: 顧客・案件（Phase 2 基本マスター） ---
+//
+// conventions §1: mutating は REST 経路（admin-template-core の
+// `rest/customers.rs` / `rest/projects.rs`）と同一の認可（editor 以上）と
+// 同一の監査（`create`/`update`/`delete` を `record_ok`）を通す。読み取りは
+// `Role::Viewer` で通し、両経路とも監査しない。
+
+#[tauri::command]
+async fn customers_list(
+    state: State<'_, AppState>,
+    params: ListParams,
+) -> Result<ListResult<Customer>, BantoError> {
+    require_role(&state, Role::Viewer, "customers").await?;
+    state.customers.list(params).await
+}
+
+#[tauri::command]
+async fn customers_get(state: State<'_, AppState>, id: i64) -> Result<Customer, BantoError> {
+    require_role(&state, Role::Viewer, "customers").await?;
+    state.customers.get(id).await
+}
+
+#[tauri::command]
+async fn customers_create(
+    state: State<'_, AppState>,
+    values: CustomerInput,
+) -> Result<Customer, BantoError> {
+    let actor = require_role(&state, Role::Editor, "customers").await?;
+    let customer = state.customers.create(values).await?;
+    record_ok(
+        &state.audit,
+        &actor,
+        "create",
+        "customers",
+        Some(&customer.id.to_string()),
+        Some(serde_json::json!({ "code": customer.code })),
+    )
+    .await;
+    Ok(customer)
+}
+
+#[tauri::command]
+async fn customers_update(
+    state: State<'_, AppState>,
+    id: i64,
+    values: CustomerInput,
+) -> Result<Customer, BantoError> {
+    let actor = require_role(&state, Role::Editor, "customers").await?;
+    let customer = state.customers.update(id, values).await?;
+    record_ok(
+        &state.audit,
+        &actor,
+        "update",
+        "customers",
+        Some(&customer.id.to_string()),
+        Some(serde_json::json!({ "code": customer.code })),
+    )
+    .await;
+    Ok(customer)
+}
+
+#[tauri::command]
+async fn customers_delete(state: State<'_, AppState>, id: i64) -> Result<(), BantoError> {
+    let actor = require_role(&state, Role::Editor, "customers").await?;
+    state.customers.delete(id).await?;
+    record_ok(
+        &state.audit,
+        &actor,
+        "delete",
+        "customers",
+        Some(&id.to_string()),
+        None,
+    )
+    .await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn projects_list(
+    state: State<'_, AppState>,
+    params: ListParams,
+) -> Result<ListResult<Project>, BantoError> {
+    require_role(&state, Role::Viewer, "projects").await?;
+    state.projects.list(params).await
+}
+
+#[tauri::command]
+async fn projects_get(state: State<'_, AppState>, id: i64) -> Result<Project, BantoError> {
+    require_role(&state, Role::Viewer, "projects").await?;
+    state.projects.get(id).await
+}
+
+#[tauri::command]
+async fn projects_create(
+    state: State<'_, AppState>,
+    values: ProjectInput,
+) -> Result<Project, BantoError> {
+    let actor = require_role(&state, Role::Editor, "projects").await?;
+    let project = state.projects.create(values).await?;
+    record_ok(
+        &state.audit,
+        &actor,
+        "create",
+        "projects",
+        Some(&project.id.to_string()),
+        Some(serde_json::json!({ "code": project.code })),
+    )
+    .await;
+    Ok(project)
+}
+
+#[tauri::command]
+async fn projects_update(
+    state: State<'_, AppState>,
+    id: i64,
+    values: ProjectInput,
+) -> Result<Project, BantoError> {
+    let actor = require_role(&state, Role::Editor, "projects").await?;
+    let project = state.projects.update(id, values).await?;
+    record_ok(
+        &state.audit,
+        &actor,
+        "update",
+        "projects",
+        Some(&project.id.to_string()),
+        Some(serde_json::json!({ "code": project.code })),
+    )
+    .await;
+    Ok(project)
+}
+
+#[tauri::command]
+async fn projects_delete(state: State<'_, AppState>, id: i64) -> Result<(), BantoError> {
+    let actor = require_role(&state, Role::Editor, "projects").await?;
+    state.projects.delete(id).await?;
+    record_ok(
+        &state.audit,
+        &actor,
+        "delete",
+        "projects",
+        Some(&id.to_string()),
+        None,
+    )
+    .await;
+    Ok(())
+}
+
 #[tauri::command]
 async fn items_list(
     state: State<'_, AppState>,
@@ -830,6 +984,8 @@ fn build_status(config: &ServerSettings, running: bool) -> ServerStatusResult {
 #[allow(clippy::too_many_arguments)]
 async fn start_embedded_server(
     items: ItemsService,
+    customers: CustomersService,
+    projects: ProjectsService,
     users: UsersService,
     settings: SettingsService,
     audit: AuditLogService,
@@ -849,6 +1005,8 @@ async fn start_embedded_server(
     // this embedded server produces carries the baseline security headers.
     let services = Services {
         items,
+        customers,
+        projects,
         users,
         settings,
         audit,
@@ -925,6 +1083,8 @@ async fn server_apply(
         Some(
             start_embedded_server(
                 state.items.clone(),
+                state.customers.clone(),
+                state.projects.clone(),
                 state.users.clone(),
                 state.settings.clone(),
                 state.audit.clone(),
@@ -1894,6 +2054,8 @@ pub fn run() {
 
             let events = event_channel();
             let items = ItemsService::new(db.clone()).with_events(events.clone());
+            let customers = CustomersService::new(db.clone()).with_events(events.clone());
+            let projects = ProjectsService::new(db.clone()).with_events(events.clone());
             let users = UsersService::new(db.clone());
             let settings = SettingsService::new(db.clone());
             let backup = BackupService::new(db_path.clone(), db.clone());
@@ -2104,6 +2266,8 @@ pub fn run() {
                 };
                 match tauri::async_runtime::block_on(start_embedded_server(
                     items.clone(),
+                    customers.clone(),
+                    projects.clone(),
                     users.clone(),
                     settings.clone(),
                     audit.clone(),
@@ -2165,6 +2329,8 @@ pub fn run() {
 
             app.manage(AppState {
                 items,
+                customers,
+                projects,
                 auth: Mutex::new(initial_auth),
                 users,
                 settings,
@@ -2191,6 +2357,16 @@ pub fn run() {
             items_delete,
             items_import,
             items_export_csv_to_folder,
+            customers_list,
+            customers_get,
+            customers_create,
+            customers_update,
+            customers_delete,
+            projects_list,
+            projects_get,
+            projects_create,
+            projects_update,
+            projects_delete,
             auth_status,
             auth_setup,
             auth_login,
@@ -2252,6 +2428,8 @@ mod tests {
         let events = event_channel();
         AppState {
             items: ItemsService::new(pool.clone()).with_events(events.clone()),
+            customers: CustomersService::new(pool.clone()).with_events(events.clone()),
+            projects: ProjectsService::new(pool.clone()).with_events(events.clone()),
             auth: Mutex::new(None),
             users: UsersService::new(pool.clone()),
             settings: SettingsService::new(pool.clone()),
@@ -2292,6 +2470,8 @@ mod tests {
         let events = event_channel();
         let state = AppState {
             items: ItemsService::new(pool.clone()).with_events(events.clone()),
+            customers: CustomersService::new(pool.clone()).with_events(events.clone()),
+            projects: ProjectsService::new(pool.clone()).with_events(events.clone()),
             auth: Mutex::new(None),
             users: UsersService::new(pool.clone()),
             settings: SettingsService::new(pool.clone()),

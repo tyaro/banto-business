@@ -34,9 +34,11 @@
 use admin_template_core::assets::FrontendAssets;
 use admin_template_core::audit::{AuditEntry, AuditLogService};
 use admin_template_core::backup::BackupService;
+use admin_template_core::customers::CustomersService;
 use admin_template_core::db::{init_db_from_target, is_postgres_url};
 use admin_template_core::events::event_channel;
 use admin_template_core::items::ItemsService;
+use admin_template_core::projects::ProjectsService;
 use admin_template_core::rest::{api_router, audited_credential_verifier, Services};
 use admin_template_core::settings::SettingsService;
 use admin_template_core::system_info::SystemInfoService;
@@ -103,6 +105,10 @@ async fn main() {
 
     let events = event_channel();
     let items = ItemsService::new(db.clone()).with_events(events.clone());
+    // Business ドメイン（Phase 2 基本マスター）。`items` と同じく、SSE で
+    // 変更を配信するためイベント送信器を付ける。
+    let customers = CustomersService::new(db.clone()).with_events(events.clone());
+    let projects = ProjectsService::new(db.clone()).with_events(events.clone());
     let users = UsersService::new(db.clone());
     let settings = SettingsService::new(db.clone());
     let backup = BackupService::new(db_path_buf.clone(), db.clone());
@@ -170,6 +176,8 @@ async fn main() {
     // produced it.
     let services = Services {
         items,
+        customers,
+        projects,
         users,
         settings,
         audit,

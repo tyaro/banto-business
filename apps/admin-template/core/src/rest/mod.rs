@@ -22,6 +22,16 @@
 //! | PUT    | `/api/items/{id}`    | `ItemInput`    | `Item` (editor+)        |
 //! | DELETE | `/api/items/{id}`    | -              | 204 (editor+)           |
 //! | POST   | `/api/items/import`  | `ItemImportRow[]` | `ImportResult` (editor+, spec M15) |
+//! | POST   | `/api/customers/list` | `ListParams`  | `ListResult<Customer>` (any role) |
+//! | GET    | `/api/customers/{id}` | -            | `Customer` (any role)   |
+//! | POST   | `/api/customers`     | `CustomerInput` | `Customer` (editor+)  |
+//! | PUT    | `/api/customers/{id}` | `CustomerInput` | `Customer` (editor+) |
+//! | DELETE | `/api/customers/{id}` | -            | 204 (editor+)           |
+//! | POST   | `/api/projects/list` | `ListParams`   | `ListResult<Project>` (any role) |
+//! | GET    | `/api/projects/{id}` | -              | `Project` (any role)    |
+//! | POST   | `/api/projects`      | `ProjectInput` | `Project` (editor+)     |
+//! | PUT    | `/api/projects/{id}` | `ProjectInput` | `Project` (editor+)     |
+//! | DELETE | `/api/projects/{id}` | -              | 204 (editor+)           |
 //! | GET    | `/api/users`         | -              | `UserSummary[]` (admin) |
 //! | POST   | `/api/users`         | `{username,password,displayName,role}` | `UserIdentityResponse` (admin) |
 //! | PUT    | `/api/users/{id}`    | `{displayName,role}` | `UserSummary` (admin) |
@@ -197,13 +207,17 @@ use tokio::sync::broadcast;
 
 use crate::audit::{AuditEntry, AuditLogService};
 use crate::backup::BackupService;
+use crate::customers::{Customer, CustomerInput, CustomersService};
 use crate::items::{ImportResult, Item, ItemImportRow, ItemInput, ItemsService};
+use crate::projects::{Project, ProjectInput, ProjectsService};
 use crate::settings::SettingsService;
 use crate::system_info::SystemInfoService;
 use crate::users::{Role, UsersService};
 
 mod attachments;
+mod customers;
 mod items;
+mod projects;
 #[cfg(test)]
 mod tests;
 
@@ -215,7 +229,9 @@ mod tests;
 pub use banto_server::routes::audited_credential_verifier;
 
 use attachments::attachments_router;
+use customers::customers_router;
 use items::items_router;
+use projects::projects_router;
 
 /// Slack added on top of `banto_attachments::MAX_ATTACHMENT_BYTES` for
 /// [`attachments_write_router`]'s `DefaultBodyLimit` (spec
@@ -241,6 +257,9 @@ const ATTACHMENT_BODY_LIMIT_SLACK_BYTES: usize = 1024 * 1024;
 /// this in any order.
 pub struct Services {
     pub items: ItemsService,
+    /// Business ドメイン（Phase 2 基本マスター）。
+    pub customers: CustomersService,
+    pub projects: ProjectsService,
     pub users: UsersService,
     pub settings: SettingsService,
     pub audit: AuditLogService,
@@ -269,6 +288,8 @@ pub fn api_router(
 ) -> Router {
     let Services {
         items,
+        customers,
+        projects,
         users,
         settings,
         audit,
@@ -300,6 +321,8 @@ pub fn api_router(
             auth.clone(),
             attachments.clone(),
         ))
+        .merge(customers_router(customers, audit.clone(), auth.clone()))
+        .merge(projects_router(projects, audit.clone(), auth.clone()))
         .merge(users_router(users, audit.clone(), auth.clone()))
         .merge(audit_log_router(
             audit.clone(),
