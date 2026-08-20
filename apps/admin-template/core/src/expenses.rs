@@ -394,7 +394,32 @@ impl ExpensesService {
         Ok(row)
     }
 
+    /// 請求済み（`invoiced = 1`）の行は編集・削除を拒否する（決定 C-20）。
+    ///
+    /// 確定した Invoice は確定時点の値をスナップショットしているので、元の行を
+    /// 直しても**請求額は動かない**（`CLAUDE.md` 1.2）。しかし
+    /// `profitability.rs` は元の行を直接集計するため、直すと**採算だけが静かに
+    /// ずれる**。請求済みの行を直す正しい手順は、請求書を取消（赤伝）して
+    /// `invoiced` を戻し、直してから新規に発行し直すこと（要件 F-I8 /
+    /// `docs/domain/state-machine.md`）。
+    ///
+    /// 確定・取消そのものは `invoices.rs` が自前の SQL で `invoiced` を
+    /// 書き換えるので、このガードには掛からない。
+    async fn ensure_not_invoiced(&self, id: i64) -> Result<(), BantoError> {
+        if self.get(id).await?.invoiced != 0 {
+            return Err(BantoError::Validation {
+                field_errors: vec![FieldError {
+                    field: "invoiced".to_string(),
+                    message: "請求済みのため変更できません。請求書を取消してから編集してください"
+                        .to_string(),
+                }],
+            });
+        }
+        Ok(())
+    }
+
     pub async fn update(&self, id: i64, input: ExpenseInput) -> Result<Expense, BantoError> {
+        self.ensure_not_invoiced(id).await?;
         let value = self.normalize(&input).await?;
         let dialect = self.db.dialect();
         let sql = format!(
@@ -436,6 +461,7 @@ impl ExpensesService {
     }
 
     pub async fn delete(&self, id: i64) -> Result<(), BantoError> {
+        self.ensure_not_invoiced(id).await?;
         let dialect = self.db.dialect();
         let sql = format!("DELETE FROM expenses WHERE id = {}", dialect.placeholder(1));
         let rows_affected = match &self.db {
@@ -555,6 +581,45 @@ mod tests {
         }
     }
 
+    /// **決定 C-20。** 請求済みの行は編集も削除もできない。
+    ///
+    /// 請求額は確定時スナップショットなので動かないが（`CLAUDE.md` 1.2）、
+    /// 採算は元の行を直接集計するので静かにずれる。直したいときは請求書を
+    /// 取消（赤伝）してから直し、新規に発行し直す（F-I8）。
+    #[tokio::test]
+    async fn an_invoiced_expense_can_be_neither_updated_nor_deleted() {
+        let (expenses, project_id) = fixture().await;
+        let created = expenses.create(input(project_id)).await.expect("create");
+
+        // 請求済みにする（本来は invoices.rs の確定が立てるフラグ）。
+        let mut invoiced = input(project_id);
+        invoiced.invoiced = true;
+        expenses
+            .update(created.id, invoiced)
+            .await
+            .expect("未請求のうちは更新できる");
+
+        let mut edit = input(project_id);
+        edit.amount = 99_999;
+        let err = expenses
+            .update(created.id, edit)
+            .await
+            .expect_err("請求済みの行は更新できない");
+        assert_eq!(field_errors(&err), vec!["invoiced"]);
+
+        let err = expenses
+            .delete(created.id)
+            .await
+            .expect_err("請求済みの行は削除できない");
+        assert_eq!(field_errors(&err), vec!["invoiced"]);
+
+        // 金額が書き換わっていないこと（拒否した後も元のまま）。
+        assert_eq!(
+            expenses.get(created.id).await.expect("get").amount,
+            input(project_id).amount
+        );
+    }
+
     /// 税区分を省略すると経費分類の既定（全て STANDARD_10）が入る。
     #[tokio::test]
     async fn tax_category_defaults_from_the_category_master() {
@@ -632,10 +697,12 @@ mod tests {
         let created = svc.create(input(project_id)).await.expect("create");
         let mut values = input(project_id);
         values.amount = 15_000;
-        values.invoiced = true;
         let updated = svc.update(created.id, values).await.expect("update");
         assert_eq!(updated.amount, 15_000);
-        assert_eq!(updated.invoiced, 1);
+        // 請求済みにすると編集も削除もできなくなる（決定 C-20）ので、この
+        // 往復試験は未請求のまま行う。請求済みの扱いは
+        // `an_invoiced_expense_can_be_neither_updated_nor_deleted` が見る。
+        assert_eq!(updated.invoiced, 0);
 
         svc.delete(created.id).await.expect("delete");
         assert!(matches!(
