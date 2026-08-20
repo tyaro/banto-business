@@ -301,7 +301,7 @@ InvoiceLine 合計**として集計する（Draft と取消済みは立たない
 
 **リソース識別子は Rust の識別子として妥当な綴りにする**（`work_logs` / `cost_rates`）。`@banto/admin-core` の DataProvider が Tauri コマンドを `${resource}_list` の規約で呼ぶため、ハイフンを含む名前はコマンドを定義できない（`docs/banto-feedback.md` に記録）。画面の URL は `/work-logs` のようにケバブケースで構わない。
 
-`docs/banto-feedback.md` に14件記録済み。
+`docs/banto-feedback.md` に15件記録済み。
 
 **`items` デモは削除済み**（2026-08-20、Phase 7 の直前。削除範囲と経緯は `docs/template-origin.md`）。新しいリソースを足すときの手本は `docs/recipes/add-resource.md` の手順に従いつつ、このリポジトリの実物としては **`customers`（最小構成）** または **`expenses`（領収書の添付あり）** を読むこと。レシピ本文は Banto の文書なので `items` を例に書かれたままだが、それらのファイルはもう無い。
 

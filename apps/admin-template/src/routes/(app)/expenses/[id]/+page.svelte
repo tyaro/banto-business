@@ -14,6 +14,7 @@
 	import { createFormResource, getResource, isProviderError } from '@banto/admin-core';
 	import { AttachmentsPanel } from '@banto/attachments';
 	import * as m from '$lib/paraglide/messages';
+	import { normalizeFormValues } from '$lib/banto/formValues';
 	import { isAttachmentsAvailable } from '$lib/banto/attachmentsAdmin';
 	import { attachmentsClient } from '$lib/banto/attachmentsClient';
 	import { formValidationMessages } from '$lib/banto/i18n';
@@ -62,7 +63,7 @@
 
 	async function handleSubmit(values: Record<string, unknown>) {
 		if (!formResource || !canWrite) return;
-		const result = await formResource.submit(values);
+		const result = await formResource.submit(normalizeFormValues(schema, values));
 		if (result.ok) {
 			goto(`${base}/expenses`);
 		} else {

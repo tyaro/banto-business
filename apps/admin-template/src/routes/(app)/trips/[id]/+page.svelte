@@ -10,6 +10,7 @@
 	import type { FormSchema } from '@banto/forms';
 	import { createFormResource, getResource, isProviderError } from '@banto/admin-core';
 	import * as m from '$lib/paraglide/messages';
+	import { normalizeFormValues } from '$lib/banto/formValues';
 	import { formValidationMessages } from '$lib/banto/i18n';
 	import { sessionStore } from '$lib/session.svelte';
 	import { canWriteResources } from '$lib/permissions';
@@ -56,7 +57,7 @@
 
 	async function handleSubmit(values: Record<string, unknown>) {
 		if (!formResource || !canWrite) return;
-		const result = await formResource.submit(values);
+		const result = await formResource.submit(normalizeFormValues(schema, values));
 		if (result.ok) {
 			goto(`${base}/trips`);
 		} else {

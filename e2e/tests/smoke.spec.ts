@@ -41,7 +41,9 @@ const CUSTOMER_NAME_UPDATED = '架空商事（改称後）';
 
 // 領収書の添付シナリオ（要件 F-E3）。経費は案件に、案件は顧客にぶら下がるので
 // 専用の顧客→案件→経費を1本作る。scenario 3 の顧客は消えるため使い回さない。
-const ATTACHMENT_CUSTOMER_CODE = `E2E-ATT-${Date.now()}`;
+// 顧客コードは20文字以内（`customers.rs` の `MAX_CODE_LEN`）。接頭辞を伸ばすと
+// タイムスタンプと合わせて超える。
+const ATTACHMENT_CUSTOMER_CODE = `E2E-A${Date.now()}`;
 const ATTACHMENT_PROJECT_NAME = `E2E添付テスト案件-${Date.now()}`;
 const ATTACHMENT_EXPENSE_PAYEE = `E2E添付テスト支払先-${Date.now()}`;
 const PNG_FILE_NAME = 'attachment-test.png';
@@ -80,6 +82,35 @@ async function clearColumnFilter(page: Page, columnHeader: string): Promise<void
 /** A grid data row (role="row") whose rendered text contains `text` - matches both the header row and data rows structurally, so callers should pass text unique to a data row. */
 function rowWithText(page: Page, text: string): Locator {
 	return page.getByRole('row').filter({ hasText: text });
+}
+
+/**
+ * 顧客の新規作成フォームを埋める。締日・支払月・支払日は**必須**なので、
+ * コードと名前だけでは保存できない（99 = 末日、Phase 1 決定 C-8）。
+ */
+async function fillCustomerForm(page: Page, code: string, name: string): Promise<void> {
+	await page.getByLabel('顧客コード').fill(code);
+	await page.getByLabel('顧客名').fill(name);
+	await page.getByLabel('締日').fill('99');
+	await page.getByLabel('支払月').fill('1');
+	await page.getByLabel('支払日').fill('99');
+}
+
+/**
+ * グリッドの行から詳細画面を開き、その id を返す。
+ *
+ * インライン編集できる列を持つグリッド（= editor 以上で開いた業務一覧）では、
+ * 単クリックはセル選択で、`onRowClick` は**ダブルクリック**でしか発火しない
+ * （BantoGrid.svelte の `handleCellClick` / `handleCellDoubleClick`）。編集可能な
+ * セルをダブルクリックすると編集が始まってしまうので、先頭の操作列（空・
+ * 編集不可）を狙う。
+ */
+async function openRowAndGetId(page: Page, text: string, resource: string): Promise<number> {
+	await rowWithText(page, text).getByRole('gridcell').first().dblclick();
+	await expect(page).toHaveURL(new RegExp(`/${resource}/\\d+$`));
+	const id = Number(page.url().split('/').pop());
+	expect(Number.isInteger(id)).toBe(true);
+	return id;
 }
 
 /** Opens the header's user menu and clicks "ログアウト" (Header.svelte moved logout off a bare header button into the shared Menu component - visual-refresh-design.md §8.2). */
@@ -139,34 +170,28 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 
 	test('3. customers: create, appears in the grid, edit, delete', async () => {
 		await page.goto('/customers');
-		await page.getByRole('button', { name: '新規作成' }).click();
+		await page.getByRole('link', { name: '新規作成' }).click();
 		await expect(page).toHaveURL(/\/customers\/new$/);
 
-		await page.getByLabel('顧客コード').fill(CUSTOMER_CODE);
-		await page.getByLabel('顧客名').fill(CUSTOMER_NAME);
+		await fillCustomerForm(page, CUSTOMER_CODE, CUSTOMER_NAME);
 		await page.getByRole('button', { name: '保存' }).click();
 		await expect(page).toHaveURL(/\/customers$/);
 
 		// サーバーモードのグリッド。行を探して回るのではなく、実行ごとに
 		// 一意なコードで絞り込む。
 		await applyColumnFilter(page, '顧客コード', CUSTOMER_CODE);
-		const row = rowWithText(page, CUSTOMER_CODE);
-		await expect(row).toBeVisible();
+		await expect(rowWithText(page, CUSTOMER_CODE)).toBeVisible();
 
-		const openLink = row.getByRole('link', { name: '開く' });
-		const href = await openLink.getAttribute('href');
-		expect(href).toMatch(/^\/customers\/\d+$/);
-		const customerUrl = new RegExp(`${href}$`);
+		const id = await openRowAndGetId(page, CUSTOMER_CODE, 'customers');
+		const detailPath = `/customers/${id}`;
 
 		// 編集: 顧客名を変えて保存し、グリッド経由ではなく URL で開き直して
 		// サーバー側に本当に永続化されたことを確かめる。
-		await openLink.click();
-		await expect(page).toHaveURL(customerUrl);
 		await page.getByLabel('顧客名').fill(CUSTOMER_NAME_UPDATED);
 		await page.getByRole('button', { name: '保存' }).click();
 		await expect(page).toHaveURL(/\/customers$/);
 
-		await page.goto(href!);
+		await page.goto(detailPath);
 		await expect(page.getByLabel('顧客名')).toHaveValue(CUSTOMER_NAME_UPDATED);
 
 		// 削除（window.confirm。クリック前に accept を仕込む）。
@@ -174,7 +199,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await page.getByRole('button', { name: '削除' }).click();
 		await expect(page).toHaveURL(/\/customers$/);
 
-		await page.goto(href!);
+		await page.goto(detailPath);
 		await expect(page.getByText('顧客が見つかりません')).toBeVisible();
 	});
 
@@ -211,7 +236,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(page.getByRole('link', { name: '監査ログ' })).toHaveCount(0);
 
 		await page.goto('/customers');
-		await expect(page.getByRole('button', { name: '新規作成' })).toHaveCount(0);
+		await expect(page.getByRole('link', { name: '新規作成' })).toHaveCount(0);
 	});
 
 	test('6. admin: audit log shows the login and customers records', async () => {
@@ -240,28 +265,23 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 	test('7. 経費の詳細: 領収書のアップロード・サムネイル・行・削除', async () => {
 		// 経費は案件に、案件は顧客にぶら下がる（要件 F-E3）。まず1本作る。
 		await page.goto('/customers/new');
-		await page.getByLabel('顧客コード').fill(ATTACHMENT_CUSTOMER_CODE);
-		await page.getByLabel('顧客名').fill(CUSTOMER_NAME);
+		await fillCustomerForm(page, ATTACHMENT_CUSTOMER_CODE, CUSTOMER_NAME);
 		await page.getByRole('button', { name: '保存' }).click();
 		await expect(page).toHaveURL(/\/customers$/);
 
 		await applyColumnFilter(page, '顧客コード', ATTACHMENT_CUSTOMER_CODE);
-		const customerHref = await rowWithText(page, ATTACHMENT_CUSTOMER_CODE)
-			.getByRole('link', { name: '開く' })
-			.getAttribute('href');
-		const customerId = Number(customerHref!.split('/').pop());
+		const customerId = await openRowAndGetId(page, ATTACHMENT_CUSTOMER_CODE, 'customers');
 
 		await page.goto('/projects/new');
 		await page.getByLabel('顧客').fill(String(customerId));
 		await page.getByLabel('案件名').fill(ATTACHMENT_PROJECT_NAME);
+		// 状態は必須の select（既定値なし）。
+		await page.getByLabel('状態').selectOption({ label: '受注' });
 		await page.getByRole('button', { name: '保存' }).click();
 		await expect(page).toHaveURL(/\/projects$/);
 
 		await applyColumnFilter(page, '案件名', ATTACHMENT_PROJECT_NAME);
-		const projectHref = await rowWithText(page, ATTACHMENT_PROJECT_NAME)
-			.getByRole('link', { name: '開く' })
-			.getAttribute('href');
-		const projectId = Number(projectHref!.split('/').pop());
+		const projectId = await openRowAndGetId(page, ATTACHMENT_PROJECT_NAME, 'projects');
 
 		await page.goto('/expenses/new');
 		await page.getByLabel('案件').fill(String(projectId));
@@ -273,12 +293,8 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(page).toHaveURL(/\/expenses$/);
 
 		await applyColumnFilter(page, '支払先', ATTACHMENT_EXPENSE_PAYEE);
-		const href = await rowWithText(page, ATTACHMENT_EXPENSE_PAYEE)
-			.getByRole('link', { name: '開く' })
-			.getAttribute('href');
-		expect(href).toMatch(/^\/expenses\/\d+$/);
-
-		await page.goto(href!);
+		const expenseId = await openRowAndGetId(page, ATTACHMENT_EXPENSE_PAYEE, 'expenses');
+		const expensePath = `/expenses/${expenseId}`;
 		await expect(page.getByRole('heading', { name: '添付ファイル' })).toBeVisible();
 		await expect(page.getByText('添付ファイルはありません')).toBeVisible();
 
@@ -332,7 +348,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await page.locator('.form-panel').getByRole('button', { name: '削除' }).click();
 		await expect(page).toHaveURL(/\/expenses$/);
 
-		await page.goto(href!);
+		await page.goto(expensePath);
 		await expect(page.getByText('経費が見つかりません')).toBeVisible();
 	});
 
@@ -343,7 +359,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		// sessionStore.load()) resolves - later than page.goto()'s "load"
 		// event. Wait for a page-specific element first so the keypress below
 		// isn't racing that mount.
-		await expect(page.getByRole('button', { name: '新規作成' })).toBeVisible();
+		await expect(page.getByRole('link', { name: '新規作成' })).toBeVisible();
 
 		await page.keyboard.press('Control+K');
 		const search = page.getByPlaceholder('コマンドを検索…');
