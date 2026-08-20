@@ -133,6 +133,19 @@ Banto Business の開発中に見つかった Banto 本体への課題を記録�
 
 ---
 
+### [2026-08-20] Phase 2 — `src-tauri` は clippy の対象外で、upstream のコードが現行 Rust の lint に引っかかる
+
+| 項目 | 内容 |
+|---|---|
+| 事象 | `cargo clippy -p admin-template --all-targets -- -D warnings` を実行すると、テンプレート由来の `attachments_upload_body` の doc コメント3行が `clippy::doc_lazy_continuation`（Rust 1.94）で落ちる。CI の Tauri check は `cargo check + test` のみで clippy を回さないため、この状態が検出されない |
+| 影響 | 派生アプリ側で「clippy を全クレートに広げる」と、自分が書いていないコードのエラーから直面する。Business では CLAUDE.md 第3章（同梱コードを Business 都合で書き換えない）に従い修正していない |
+| 回避策 | 修正せず記録のみ。Business のコードは `-D warnings` で通ることを個別に確認した |
+| 分類 | Banto共通 |
+| Banto Issue | 未起票 |
+| 状態 | 未対応 |
+
+---
+
 ### [記録例・削除可] Phase 2 — Grid の列幅がリソース定義から指定できない
 
 | 項目 | 内容 |
@@ -153,7 +166,7 @@ Banto Business の開発中に見つかった Banto 本体への課題を記録�
 | Phase | 記録件数 | うち Banto共通 | 主な傾向 |
 |---|---|---|---|
 | 0 | 2 | 2 | 派生（rename / バージョン固定）の導線に穴 |
-| 2 | 4 | 4 | フォームの表現力（説明文）とデモ資産の重さ。機械検査は有効に機能 |
+| 2 | 5 | 5 | フォームの表現力（説明文）とデモ資産の重さ。機械検査は有効に機能 |
 | 3 | 0 | 0 | |
 | 4 | 0 | 0 | |
 | 5 | 0 | 0 | |

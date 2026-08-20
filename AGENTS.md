@@ -204,6 +204,21 @@ Draft → Issued → Partially Paid ⇄ Paid
 
 ---
 
+## 4.1 開発コンテナでの `src-tauri` のビルド
+
+Claude Code の作業コンテナは既定で Tauri のシステム依存を持たないため `cargo check -p admin-template` が失敗する。**「Tauri 側は検証できない」で済ませない。** 以下を一度入れれば `src-tauri` のコンパイル・テスト・clippy まで手元で通せる。
+
+```sh
+apt-get update -qq && apt-get install -y \
+  libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libsoup-3.0-dev
+```
+
+（GUI の起動確認は依然として実機が必要。ここで通せるのはコンパイルとテストまで。）
+
+`cargo check -p admin-template` を通していないコミットを push すると、CI の Tauri check（ubuntu / windows）で初めて落ちる。**サービスを追加したときは `rest::Services` の初期化箇所が `src-tauri` 側にもある**（`start_embedded_server`）ことに注意する。
+
+---
+
 ## 5. テスト要件
 
 ### 必須

@@ -984,6 +984,8 @@ fn build_status(config: &ServerSettings, running: bool) -> ServerStatusResult {
 #[allow(clippy::too_many_arguments)]
 async fn start_embedded_server(
     items: ItemsService,
+    customers: CustomersService,
+    projects: ProjectsService,
     users: UsersService,
     settings: SettingsService,
     audit: AuditLogService,
@@ -1003,6 +1005,8 @@ async fn start_embedded_server(
     // this embedded server produces carries the baseline security headers.
     let services = Services {
         items,
+        customers,
+        projects,
         users,
         settings,
         audit,
@@ -1079,6 +1083,8 @@ async fn server_apply(
         Some(
             start_embedded_server(
                 state.items.clone(),
+                state.customers.clone(),
+                state.projects.clone(),
                 state.users.clone(),
                 state.settings.clone(),
                 state.audit.clone(),
@@ -2260,6 +2266,8 @@ pub fn run() {
                 };
                 match tauri::async_runtime::block_on(start_embedded_server(
                     items.clone(),
+                    customers.clone(),
+                    projects.clone(),
                     users.clone(),
                     settings.clone(),
                     audit.clone(),
