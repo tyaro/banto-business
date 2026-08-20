@@ -50,6 +50,8 @@ async fn reset_schema(url: &str) {
         "DROP TABLE IF EXISTS payment_allocations, payments, invoice_tax_summaries, \
          invoice_lines, invoices, expenses, work_logs, trips, cost_rates, work_categories, \
          expense_categories, projects, customers CASCADE",
+        // Phase 8（同期の土台）。
+        "DROP TABLE IF EXISTS sync_outbox, sync_state CASCADE",
         "DROP TABLE IF EXISTS _sqlx_migrations",
     ] {
         sqlx::query(stmt)
@@ -58,6 +60,23 @@ async fn reset_schema(url: &str) {
             .expect("drop for reset");
     }
     pool.close().await;
+}
+
+/// 採番レンジの確認だけに使う最小の顧客入力。
+fn range_customer(code: &str, name: &str) -> CustomerInput {
+    CustomerInput {
+        code: code.to_string(),
+        name: name.to_string(),
+        contact_person: None,
+        address: None,
+        phone: None,
+        email: None,
+        billing_name: None,
+        closing_day: DAY_END_OF_MONTH,
+        payment_month_offset: 1,
+        payment_day: DAY_END_OF_MONTH,
+        note: None,
+    }
 }
 
 #[tokio::test]
@@ -459,4 +478,50 @@ async fn app_layer_crud_round_trips_on_postgres() {
         .await
         .expect("profitability after cancel");
     assert_eq!(after_cancel.revenue, 0);
+}
+
+/// **Phase 8: 採番レンジの PostgreSQL 経路。**
+///
+/// SQLite は `sqlite_sequence` を直接書き換えるが、PostgreSQL は IDENTITY 列の
+/// シーケンスを `setval` で動かす。両者は別のコードパスで、**実際の PostgreSQL
+/// でしか踏めない**（`pg_get_serial_sequence` の解決も含めて）。
+#[tokio::test]
+async fn the_device_id_range_applies_to_postgres_identity_sequences() {
+    let Ok(url) = std::env::var("BANTO_TEST_PG_URL") else {
+        eprintln!("pg_smoke: BANTO_TEST_PG_URL unset - skipping (no PostgreSQL server)");
+        return;
+    };
+
+    reset_schema(&url).await;
+    let db = init_db_from_target(&url)
+        .await
+        .expect("init_db_from_target should succeed");
+
+    // デバイス 1（Pixel）のレンジへ寄せる。
+    admin_template_core::sync::ensure_id_range(&db, 1)
+        .await
+        .expect("ensure_id_range on postgres");
+
+    let customers = CustomersService::new(db.clone());
+    let first = customers
+        .create(range_customer("PG-R001", "架空商事"))
+        .await
+        .expect("customer on postgres");
+    assert_eq!(
+        admin_template_core::sync::owning_device(first.id),
+        1,
+        "id {} がデバイス 1 のレンジに入っていない",
+        first.id
+    );
+    assert!(first.id >= 1_000_000_000);
+
+    // 再実行しても巻き戻らない（同期のたびに呼ばれても安全）。
+    admin_template_core::sync::ensure_id_range(&db, 1)
+        .await
+        .expect("ensure_id_range is idempotent");
+    let second = customers
+        .create(range_customer("PG-R002", "架空工業"))
+        .await
+        .expect("second customer");
+    assert_eq!(second.id, first.id + 1);
 }

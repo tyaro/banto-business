@@ -18,6 +18,7 @@ pub mod payments;
 pub mod profitability;
 pub mod projects;
 pub mod rest;
+pub mod sync;
 pub mod tax;
 pub mod trips;
 pub mod work_logs;
