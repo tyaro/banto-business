@@ -600,5 +600,17 @@
   "sync.diffTheirs": "PC",
   "sync.takeMine": "この端末を採る",
   "sync.takeTheirs": "PC を採る",
-  "sync.resolveError": "解決できませんでした。"
+  "sync.resolveError": "解決できませんでした。",
+  "nav.quick": "クイック入力",
+  "quick.title": "クイック入力",
+  "quick.description": "工数を1件だけ、少ない操作で記録します。案件と作業分類は前回の値を覚えています。",
+  "quick.chooseProject": "案件を選ぶ",
+  "quick.minutesPreset": "{minutes}分",
+  "quick.save": "記録する",
+  "quick.saved": "記録しました（この画面で {count} 件）。",
+  "quick.saveError": "記録できませんでした。",
+  "quick.incomplete": "案件・作業分類・時間を入れてください。",
+  "quick.dayTotal": "{date} の合計: {hours} 時間",
+  "quick.readOnlyTitle": "記録できません",
+  "quick.readOnlyDesc": "工数の記録には編集者以上の権限が要ります。"
 }
