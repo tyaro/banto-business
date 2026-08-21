@@ -20,7 +20,9 @@
  *      ドリフト対策。実在しない `@banto/grid-core` 等の掲載を防ぐ）
  *   8. §1 REST/Tauri 両経路対称 … mutating 操作が両経路に存在するかを
  *      DUAL_PATH マニフェスト + 完全性チェックで担保（片側だけ足すのを捕捉）。
- *      maintainability-review-2026-07.md CR-1
+ *      片側だけが正しい場合は DESKTOP_ONLY（OS 統合で REST を持たない Tauri
+ *      コマンド）/ SERVER_ONLY（相手端末の受け口で Tauri を持たない REST
+ *      ルート）に分類する。maintainability-review-2026-07.md CR-1
  *   9. §6 セキュリティ不変条件（grep 可能なもの、CR-2）:
  *      NewAttachment に mime フィールド無し / settings_get·set は Admin 対称
  *  10. §13 app 層コンポーネントに生の日本語リテラルが無い
@@ -430,12 +432,20 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 		'POST /api/expense_categories/list',
 		'POST /api/audit-log/list',
 		'POST /api/attachments/list',
-		// Phase 8 同期（docs/domain/sync.md 11節）。PC 側は受けるだけで、
-		// 話しかける向きが常にスマホ → PC の一方向。この段は読み取りのみ
-		// （PC の DB を書き換えない）なので Tauri コマンドの対は無い。
+		// Phase 8 同期（docs/domain/sync.md 11節）。handshake / pull は PC の DB を
+		// 書き換えない読み取り。取り込む push は下の SERVER_ONLY。
 		'POST /api/sync/handshake',
 		'POST /api/sync/pull'
 	]);
+
+	// server-only（受け口専用。Tauri を持たないのが正しい、§1 の対称対象外）。
+	// DESKTOP_ONLY の裏返し: あちらは「OS 統合なので REST を持たない Tauri
+	// コマンド」、こちらは「相手端末が話しかけてくる先なので Tauri を持たない
+	// REST ルート」。同期は話しかける向きが常にスマホ → PC の一方向で、PC は
+	// 受けるだけ・スマホは HTTP クライアントとして呼ぶだけなので、同じ操作が
+	// 両経路にある形にならない（docs/domain/sync.md 11.1）。
+	// mutating なのでロール床は照合する（下記 (e)）。
+	const SERVER_ONLY = [{ rest: 'POST /api/sync/push', role: 'Editor' }];
 
 	// --- 一次情報のパース ---
 	// Tauri: トップレベルのコマンド。tests は #[tauri::command] を付けないので混入しない。
@@ -493,12 +503,13 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 	}
 	// (c) REST 完全性: 全ルートが dual-path / read のいずれか。
 	const dualRest = new Set(DUAL_PATH.map((d) => d.rest));
+	const serverOnlyRest = new Set(SERVER_ONLY.map((d) => d.rest));
 	for (const route of restRoutes) {
-		if (dualRest.has(route) || REST_READ.has(route)) continue;
+		if (dualRest.has(route) || REST_READ.has(route) || serverOnlyRest.has(route)) continue;
 		fail(
 			rule,
 			'rest/mod.rs',
-			`未分類の REST ルート \`${route}\` — Tauri コマンドとペアにして DUAL_PATH に足すか REST_READ に分類（§1 両経路対称）`
+			`未分類の REST ルート \`${route}\` — Tauri コマンドとペアにして DUAL_PATH に足すか、REST_READ / SERVER_ONLY に分類（§1 両経路対称）`
 		);
 	}
 	// (d) doc-sync: Route table の各 path が実際の .route() 宣言に存在すること。
@@ -558,6 +569,17 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 
 		// `require_auth` のみ（RoleGuard 無し）は最下位ロール = Viewer 床と同値。
 		const normRole = (r) => (r === 'Auth' ? 'Viewer' : r);
+		// server-only は REST 側だけを照合する（対となる Tauri が無いのが正しい）。
+		for (const { rest, role } of SERVER_ONLY) {
+			const rr = restRouteRole[rest] ?? null;
+			if (normRole(rr) !== normRole(role))
+				fail(
+					rule,
+					'rest/',
+					`server-only ルートのロール床不一致 \`${rest}\`: 期待=${role} / REST=${rr ?? '不明'}（§1）`
+				);
+		}
+
 		const roleChecks = [...DUAL_PATH.filter((d) => d.role), ...ROLE_READ];
 		for (const { tauri, rest, role } of roleChecks) {
 			const want = normRole(role);
@@ -575,7 +597,7 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 	if (!results.some((r) => r.includes(`[${rule}]`)))
 		pass(
 			rule,
-			`両経路対称: dual-path ${DUAL_PATH.length} 対（ロール床照合 ${DUAL_PATH.filter((d) => d.role).length} + read ${ROLE_READ.length}）+ Tauri ${tauriCmds.size} コマンド / REST ${restRoutes.size} ルートを分類済み`
+			`両経路対称: dual-path ${DUAL_PATH.length} 対（ロール床照合 ${DUAL_PATH.filter((d) => d.role).length} + read ${ROLE_READ.length} + server-only ${SERVER_ONLY.length}）+ Tauri ${tauriCmds.size} コマンド / REST ${restRoutes.size} ルートを分類済み`
 		);
 }
 
