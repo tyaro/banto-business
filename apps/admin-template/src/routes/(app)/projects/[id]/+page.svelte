@@ -14,6 +14,7 @@
 	import type { FormSchema } from '@banto/forms';
 	import { createFormResource, getResource, isProviderError } from '@banto/admin-core';
 	import * as m from '$lib/paraglide/messages';
+	import { loadCustomerOptions } from '$lib/banto/referenceOptions.svelte';
 	import { normalizeFormValues } from '$lib/banto/formValues';
 	import { formValidationMessages } from '$lib/banto/i18n';
 	import { sessionStore } from '$lib/session.svelte';
@@ -43,6 +44,8 @@
 
 	async function loadForm() {
 		if (!formResource) return;
+		// 顧客の選択肢（`referenceOptions`）。画面を開くたびに読み直す。
+		void loadCustomerOptions();
 		await formResource.load();
 		if (formResource.initialValues) {
 			store = createFormStore(schema, formResource.initialValues, formValidationMessages());

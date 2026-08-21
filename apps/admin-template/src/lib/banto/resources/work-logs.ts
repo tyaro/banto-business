@@ -14,6 +14,7 @@
 import type { ResourceDefinition } from '@banto/admin-core';
 import type { FormSchema } from '@banto/forms';
 import * as m from '$lib/paraglide/messages';
+import { projectOptions } from '$lib/banto/referenceOptions.svelte';
 
 const integerValidate = (value: unknown): string | null =>
 	Number.isInteger(Number(value)) ? null : m['validation.integer']();
@@ -25,9 +26,13 @@ export const workLogsSchema: FormSchema = {
 			get label() {
 				return m['workLogs.fieldProjectId']();
 			},
-			type: 'number',
+			// 内部 id を手で打たせない（`referenceOptions` の doc を参照）。
+			// スマホでは数値キーボードしか出ず、案件名で探せないため。
+			type: 'select',
 			required: true,
-			validate: integerValidate
+			get options() {
+				return projectOptions();
+			}
 		},
 		{
 			name: 'workedOn',

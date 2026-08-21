@@ -9,6 +9,7 @@
 import type { ResourceDefinition } from '@banto/admin-core';
 import type { FieldOption, FormSchema } from '@banto/forms';
 import * as m from '$lib/paraglide/messages';
+import { customerOptions } from '$lib/banto/referenceOptions.svelte';
 
 /**
  * 案件の状態（Phase 1 決定 C-12）。Rust 側 `ProjectStatus` と同じ7値。
@@ -58,9 +59,12 @@ export const projectsSchema: FormSchema = {
 			get label() {
 				return m['projects.fieldCustomerId']();
 			},
-			type: 'number',
+			// 案件の `projectId` と同じ理由で選択式にする（`referenceOptions`）。
+			type: 'select',
 			required: true,
-			validate: integerValidate
+			get options() {
+				return customerOptions();
+			}
 		},
 		{
 			name: 'name',
