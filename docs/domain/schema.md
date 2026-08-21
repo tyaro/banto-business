@@ -66,7 +66,7 @@ Phase 1 の確定内容（`open-questions.md`）に基づくテーブル定義�
 | 列                          | 型                         | 説明                                       |
 | --------------------------- | -------------------------- | ------------------------------------------ |
 | `id`                        | `INTEGER PK AUTOINCREMENT` |                                            |
-| `code`                      | `TEXT NOT NULL UNIQUE`     | 顧客コード（手入力）                       |
+| `code`                      | `TEXT NOT NULL UNIQUE`     | 顧客コード（空欄なら `C001` で自動採番）   |
 | `name`                      | `TEXT NOT NULL`            |                                            |
 | `contact_person`            | `TEXT`                     | 担当者                                     |
 | `address`                   | `TEXT`                     |                                            |

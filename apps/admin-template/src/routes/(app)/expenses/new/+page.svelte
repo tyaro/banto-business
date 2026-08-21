@@ -10,6 +10,7 @@
 	import type { FormSchema } from '@banto/forms';
 	import { createFormResource, getResource } from '@banto/admin-core';
 	import * as m from '$lib/paraglide/messages';
+	import { loadProjectOptions } from '$lib/banto/referenceOptions.svelte';
 	import { normalizeFormValues } from '$lib/banto/formValues';
 	import { formValidationMessages } from '$lib/banto/i18n';
 	import PageHeader from '$lib/components/ui/PageHeader.svelte';
@@ -22,7 +23,10 @@
 	// i18n layer ② (ADR-0005): Paraglide 由来の検証メッセージを注入する。
 	const store = createFormStore(schema, undefined, formValidationMessages());
 
+	// 案件の選択肢（`referenceOptions`）。画面を開くたびに読み直す ——
+	// 起動時に1度だけだと、案件を作った直後にその案件が出てこない。
 	$effect(() => {
+		void loadProjectOptions();
 		void formResource.load();
 	});
 

@@ -269,6 +269,7 @@
   "customers.resourceLabel": "Customers",
   "customers.description": "Billing destinations, closing days and payment terms",
   "customers.fieldCode": "Customer code",
+  "customers.codeAutoHint": "Leave blank to auto-number as C001",
   "customers.fieldName": "Customer name",
   "customers.fieldContactPerson": "Contact",
   "customers.fieldAddress": "Address",

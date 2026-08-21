@@ -9,6 +9,7 @@
 import type { ResourceDefinition } from '@banto/admin-core';
 import type { FieldOption, FormSchema } from '@banto/forms';
 import * as m from '$lib/paraglide/messages';
+import { customerOptions } from '$lib/banto/referenceOptions.svelte';
 
 /**
  * 案件の状態（Phase 1 決定 C-12）。Rust 側 `ProjectStatus` と同じ7値。
@@ -38,29 +39,16 @@ const integerValidate = (value: unknown): string | null =>
 export const projectsSchema: FormSchema = {
 	fields: [
 		{
-			name: 'code',
-			get label() {
-				return m['projects.fieldCode']();
-			},
-			type: 'text',
-			// 必須にしない: 空欄で保存すると Rust 側が YYYY-NNN を採番する
-			// （要件 F-M3）。採番後は通常の編集対象。
-			max: 20,
-			// FieldDef に hint は無いので、自動採番の説明は placeholder で出す
-			// （packages/forms/src/types.ts の FieldDef を変えない ＝
-			// conventions §4/§5: パッケージ契約をアプリ都合で広げない）。
-			get placeholder() {
-				return m['projects.codeAutoHint']();
-			}
-		},
-		{
 			name: 'customerId',
 			get label() {
 				return m['projects.fieldCustomerId']();
 			},
-			type: 'number',
+			// 案件の `projectId` と同じ理由で選択式にする（`referenceOptions`）。
+			type: 'select',
 			required: true,
-			validate: integerValidate
+			get options() {
+				return customerOptions();
+			}
 		},
 		{
 			name: 'name',
@@ -140,6 +128,25 @@ export const projectsSchema: FormSchema = {
 			},
 			type: 'date',
 			readonly: true
+		},
+		{
+			// **入力欄の末尾に置く。** 自動採番されるので普段は触らない欄で、
+			// 先頭にあると「まず何か入れる欄」に見えてしまう（スマホでは特に）。
+			// 会計ソフト側のコードに合わせたいときだけ使う。
+			name: 'code',
+			get label() {
+				return m['projects.fieldCode']();
+			},
+			type: 'text',
+			// 必須にしない: 空欄で保存すると Rust 側が YYYY-NNN を採番する
+			// （要件 F-M3）。採番後は通常の編集対象。
+			max: 20,
+			// FieldDef に hint は無いので、自動採番の説明は placeholder で出す
+			// （packages/forms/src/types.ts の FieldDef を変えない ＝
+			// conventions §4/§5: パッケージ契約をアプリ都合で広げない）。
+			get placeholder() {
+				return m['projects.codeAutoHint']();
+			}
 		}
 	]
 };

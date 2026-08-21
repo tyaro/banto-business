@@ -95,8 +95,14 @@
 		display: flex;
 		align-items: center;
 		gap: 0.75rem;
-		height: var(--banto-shell-header-height);
-		padding: 0 1rem;
+		/* セーフエリア（app.css）ぶん背を伸ばし、その内側に中身を置く。
+		   高さを据え置いて padding だけ足すと中身が潰れる。box-sizing は
+		   Tailwind の preflight が border-box にしているので、この height は
+		   padding を含む。左右も見るのは、横向きでカメラの切り欠きが
+		   側面に来るため（開いた Fold は横長で使うことがある）。 */
+		height: calc(var(--banto-shell-header-height) + var(--app-safe-top));
+		padding: var(--app-safe-top) calc(1rem + var(--app-safe-right)) 0
+			calc(1rem + var(--app-safe-left));
 		background: var(--banto-surface);
 		border-bottom: 1px solid var(--banto-border);
 		/* Glass preset (spec M12): no-op under standard (--banto-backdrop: none). */

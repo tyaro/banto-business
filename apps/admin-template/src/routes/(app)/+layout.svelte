@@ -110,7 +110,11 @@
 
 	main {
 		flex: 1;
-		padding: 1.25rem;
+		/* セーフエリア（app.css）。上はヘッダが既に避けているので足さない。
+		   下はジェスチャーバー、右は横向きの切り欠き。`max()` なのは、
+		   inset が 0 のデスクトップで余白が消えないようにするため。 */
+		padding: 1.25rem max(1.25rem, var(--app-safe-right)) max(1.25rem, var(--app-safe-bottom))
+			1.25rem;
 	}
 
 	.overlay-backdrop {

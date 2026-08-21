@@ -10,6 +10,7 @@
 	import type { FormSchema } from '@banto/forms';
 	import { createFormResource, getResource, isProviderError } from '@banto/admin-core';
 	import * as m from '$lib/paraglide/messages';
+	import { loadProjectOptions } from '$lib/banto/referenceOptions.svelte';
 	import { normalizeFormValues } from '$lib/banto/formValues';
 	import { formValidationMessages } from '$lib/banto/i18n';
 	import { sessionStore } from '$lib/session.svelte';
@@ -38,6 +39,9 @@
 
 	async function loadForm() {
 		if (!formResource) return;
+		// 案件の選択肢（`referenceOptions`）。画面を開くたびに読み直す ——
+		// 起動時に1度だけだと、案件を作った直後にその案件が出てこない。
+		void loadProjectOptions();
 		await formResource.load();
 		if (formResource.initialValues) {
 			store = createFormStore(schema, formResource.initialValues, formValidationMessages());

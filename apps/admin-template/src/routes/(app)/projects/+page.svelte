@@ -54,7 +54,6 @@
 			width: 80,
 			editable: false
 		},
-		{ id: 'id', header: 'ID', accessor: (row) => row.id, width: 72, editable: false },
 		...columnsFromSchema<ProjectRow>(projectsSchema, {
 			overrides: {
 				code: { width: 120 },
