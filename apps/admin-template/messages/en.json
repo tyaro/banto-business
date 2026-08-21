@@ -589,5 +589,16 @@
   "sync.adminOnlyDesc": "Sync settings are app-wide. Sign in as an administrator.",
   "sync.desktopOnlyTitle": "Available in the app only",
   "sync.desktopOnlyDesc": "A sync always runs from the device that initiates it, so it is not available in a browser.",
-  "sync.scopeNote": "Customers, projects, work logs, trips, expenses and the master tables sync. Invoices and payments are PC-only and never sync."
+  "sync.scopeNote": "Customers, projects, work logs, trips, expenses and the master tables sync. Invoices and payments are PC-only and never sync.",
+  "sync.conflictsHeading": "Unresolved conflicts",
+  "sync.conflictsHint": "These rows were edited on both devices. Choose which version to keep — until you do, both devices keep their own.",
+  "sync.conflictInvoiced": "This row is already invoiced. Cancel the invoice before overwriting it with this device's version.",
+  "sync.conflictDeletedHere": "Deleted on this device.",
+  "sync.conflictDeletedThere": "Deleted on the PC.",
+  "sync.diffField": "Field",
+  "sync.diffMine": "This device",
+  "sync.diffTheirs": "PC",
+  "sync.takeMine": "Keep this device's",
+  "sync.takeTheirs": "Keep the PC's",
+  "sync.resolveError": "Could not resolve the conflict."
 }
