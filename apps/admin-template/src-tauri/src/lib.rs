@@ -956,10 +956,40 @@ async fn sync_run(
     state: State<'_, AppState>,
     password: Option<String>,
 ) -> Result<SyncOutcome, BantoError> {
+    let actor = require_role(&state, Role::Editor, "sync").await?;
+    let peer = connect_peer(&state, password).await?;
+    let outcome = admin_template_core::sync::client::run_sync(&state.sync, &peer).await?;
+
+    record_ok(
+        &state.audit,
+        &actor,
+        "sync",
+        "sync",
+        Some(&outcome.peer_device_id.to_string()),
+        Some(serde_json::json!({
+            "pulledApplied": outcome.pulled_applied,
+            "pushedApplied": outcome.pushed_applied,
+            "conflictsDetected": outcome.conflicts_detected,
+        })),
+    )
+    .await;
+    Ok(outcome)
+}
+
+/// 設定と、メモリに控えたパスワードで相手（PC）へ繋ぐ。
+///
+/// `password` を渡すとメモリに控え、次からは省略できる。控えが無い状態で
+/// 省略されたら、**推測せずに入力を求める**（空パスワードでログインを試すと、
+/// 失敗回数の制限（`banto_server::auth` の RateLimitPolicy）に無駄に当たる）。
+///
+/// ログインに失敗したら控えを捨てる。捨てないと、打ち間違えたパスワードを
+/// アプリを再起動するまで使い続けることになる。
+async fn connect_peer(
+    state: &AppState,
+    password: Option<String>,
+) -> Result<admin_template_core::sync::http_peer::HttpPeer, BantoError> {
     use admin_template_core::sync::http_peer::{HttpPeer, PeerCredentials};
     use admin_template_core::sync::{PEER_URL_KEY, PEER_USERNAME_KEY};
-
-    let actor = require_role(&state, Role::Editor, "sync").await?;
 
     if let Some(password) = password {
         *state.sync_password.lock().expect("sync password lock") = Some(password);
@@ -986,7 +1016,7 @@ async fn sync_run(
         .await?
         .unwrap_or_default();
 
-    let peer = match HttpPeer::connect(
+    HttpPeer::connect(
         &peer_url,
         PeerCredentials {
             username: &peer_username,
@@ -994,30 +1024,90 @@ async fn sync_run(
         },
     )
     .await
-    {
-        Ok(peer) => peer,
-        Err(error) => {
-            *state.sync_password.lock().expect("sync password lock") = None;
-            return Err(error);
-        }
-    };
+    .inspect_err(|_| {
+        *state.sync_password.lock().expect("sync password lock") = None;
+    })
+}
 
-    let outcome = admin_template_core::sync::client::run_sync(&state.sync, &peer).await?;
+/// 未解決の衝突の一覧（admin のみ）。読み取りなので監査しない。
+#[tauri::command]
+async fn sync_conflicts_list(
+    state: State<'_, AppState>,
+) -> Result<Vec<admin_template_core::sync::conflicts::StoredConflict>, BantoError> {
+    require_role(&state, Role::Admin, "sync").await?;
+    admin_template_core::sync::conflicts::open_conflicts(state.sync.db()).await
+}
+
+/// 衝突を1件解決する（editor 以上 —— 業務データを書き換える）。
+///
+/// 「相手を採る」は手元に書くだけなので繋がらなくてよいが、「自分を採る」は
+/// **相手へ `force` 付きで送り直す**ので PC に届く必要がある
+/// （`docs/domain/sync.md` 11.7）。どちらもパスワードの控えを使う経路を
+/// 通すため、扱いは `sync_run` と揃える。
+#[tauri::command]
+async fn sync_conflict_resolve(
+    state: State<'_, AppState>,
+    conflict_id: i64,
+    resolution: admin_template_core::sync::client::Resolution,
+    password: Option<String>,
+) -> Result<SyncSettings, BantoError> {
+    use admin_template_core::sync::client::{resolve_conflict, Resolution};
+
+    let actor = require_role(&state, Role::Editor, "sync").await?;
+
+    // 「相手を採る」は手元だけで済むので、繋がらなくても・パスワードが
+    // 無くても解決できる。外出先で片付けられることに意味がある。
+    if resolution == Resolution::TakeTheirs {
+        resolve_conflict(&state.sync, &NoPeer, conflict_id, resolution).await?;
+    } else {
+        let peer = connect_peer(&state, password).await?;
+        resolve_conflict(&state.sync, &peer, conflict_id, resolution).await?;
+    }
 
     record_ok(
         &state.audit,
         &actor,
+        "resolve",
         "sync",
-        "sync",
-        Some(&outcome.peer_device_id.to_string()),
-        Some(serde_json::json!({
-            "pulledApplied": outcome.pulled_applied,
-            "pushedApplied": outcome.pushed_applied,
-            "conflictsDetected": outcome.conflicts_detected,
-        })),
+        Some(&conflict_id.to_string()),
+        Some(serde_json::json!({ "resolution": resolution })),
     )
     .await;
-    Ok(outcome)
+    sync_settings_of(&state).await
+}
+
+/// 「相手を採る」に渡す相手役。**呼ばれない** —— その経路は手元に書くだけで
+/// 相手に触らないため。呼ばれたらこちらの想定違いなので、黙って成功させず
+/// エラーにする。
+struct NoPeer;
+
+impl admin_template_core::sync::client::SyncPeer for NoPeer {
+    async fn handshake(
+        &self,
+        _request: admin_template_core::sync::protocol::HandshakeRequest,
+    ) -> Result<admin_template_core::sync::protocol::Handshake, BantoError> {
+        Err(BantoError::Other(
+            "「相手を採る」は相手に接続しない想定".to_string(),
+        ))
+    }
+
+    async fn pull(
+        &self,
+        _request: admin_template_core::sync::protocol::PullRequest,
+    ) -> Result<admin_template_core::sync::protocol::Pull, BantoError> {
+        Err(BantoError::Other(
+            "「相手を採る」は相手に接続しない想定".to_string(),
+        ))
+    }
+
+    async fn push(
+        &self,
+        _request: admin_template_core::sync::protocol::PushRequest,
+    ) -> Result<admin_template_core::sync::protocol::PushResult, BantoError> {
+        Err(BantoError::Other(
+            "「相手を採る」は相手に接続しない想定".to_string(),
+        ))
+    }
 }
 
 /// 案件採算（Phase 4）。REST の `GET /api/profitability/{id}`（id は案件 id）と同じ
@@ -3120,6 +3210,8 @@ pub fn run() {
             sync_settings_get,
             sync_settings_apply,
             sync_run,
+            sync_conflicts_list,
+            sync_conflict_resolve,
             payments_list,
             payments_get,
             payments_create,

@@ -26,10 +26,20 @@
 		applySyncSettings,
 		getSyncSettings,
 		isSyncAvailable,
+		listSyncConflicts,
+		resolveSyncConflict,
 		runSync,
+		type Resolution,
+		type StoredConflict,
 		type SyncOutcome,
 		type SyncSettings
 	} from '$lib/banto/syncAdmin';
+	import {
+		deletedOnOneSide,
+		differences,
+		rowTitle,
+		tableLabel
+	} from '$lib/banto/syncConflictLabels';
 	import { isProviderError } from '@banto/admin-core';
 	import { sessionStore } from '$lib/session.svelte';
 	import PageHeader from '$lib/components/ui/PageHeader.svelte';
@@ -59,6 +69,10 @@
 	let outcome = $state<SyncOutcome | null>(null);
 	let syncError = $state('');
 
+	let conflicts = $state<StoredConflict[]>([]);
+	let resolvingId = $state<number | null>(null);
+	let conflictError = $state('');
+
 	function adopt(next: SyncSettings) {
 		settings = next;
 		deviceId = next.deviceId;
@@ -75,10 +89,23 @@
 		failed = false;
 		try {
 			adopt(await getSyncSettings());
+			await loadConflicts();
 		} catch {
 			failed = true;
 		} finally {
 			loading = false;
+		}
+	}
+
+	/**
+	 * 未解決の衝突を読み直す。失敗しても画面は壊さない —— 衝突が読めない
+	 * ことと、同期そのものが使えないことは別。
+	 */
+	async function loadConflicts() {
+		try {
+			conflicts = await listSyncConflicts();
+		} catch {
+			conflicts = [];
 		}
 	}
 
@@ -121,6 +148,7 @@
 			// （控えはアプリ側が持っており、`hasPassword` で分かる）。
 			password = '';
 			adopt(await getSyncSettings());
+			await loadConflicts();
 		} catch (err) {
 			syncError = messageOf(err, m['sync.runError']());
 			// 失敗の理由がパスワードなら、アプリ側の控えも捨てられている。
@@ -131,6 +159,31 @@
 			}
 		} finally {
 			syncing = false;
+		}
+	}
+
+	/**
+	 * 衝突を1件解決する。
+	 *
+	 * 「相手を採る」は手元に書くだけなので、**PC に繋がらなくても押せる**
+	 * （`docs/domain/sync.md` 11.7）。「自分を採る」は送り直すので、
+	 * パスワードの控えが無ければ入力欄の値を渡す。
+	 */
+	async function resolve(conflict: StoredConflict, resolution: Resolution) {
+		resolvingId = conflict.id;
+		conflictError = '';
+		try {
+			const next = await resolveSyncConflict(
+				conflict.id,
+				resolution,
+				resolution === 'TAKE_MINE' ? password || undefined : undefined
+			);
+			adopt(next);
+			await loadConflicts();
+		} catch (err) {
+			conflictError = messageOf(err, m['sync.resolveError']());
+		} finally {
+			resolvingId = null;
 		}
 	}
 
@@ -198,6 +251,80 @@
 				</p>
 			{/if}
 		</section>
+
+		{#if conflicts.length > 0}
+			<section class="panel">
+				<h2>{m['sync.conflictsHeading']()}</h2>
+				<p class="note note--muted">{m['sync.conflictsHint']()}</p>
+
+				{#if conflictError}
+					<p class="note note--error">{conflictError}</p>
+				{/if}
+
+				{#each conflicts as conflict (conflict.id)}
+					{@const diffs = differences(conflict.table, conflict.mine, conflict.theirs)}
+					{@const gone = deletedOnOneSide(conflict.mine, conflict.theirs)}
+					<article class="conflict">
+						<header>
+							<strong>{rowTitle(conflict.mine, conflict.theirs)}</strong>
+							<span class="chip">{tableLabel(conflict.table)}</span>
+						</header>
+
+						{#if conflict.reason === 'INVOICED_FROZEN'}
+							<p class="note note--warn">{m['sync.conflictInvoiced']()}</p>
+						{/if}
+
+						{#if gone === 'mine'}
+							<p class="note note--warn">{m['sync.conflictDeletedHere']()}</p>
+						{:else if gone === 'theirs'}
+							<p class="note note--warn">{m['sync.conflictDeletedThere']()}</p>
+						{/if}
+
+						{#if diffs.length > 0}
+							<div class="diff">
+								<table>
+									<thead>
+										<tr>
+											<th>{m['sync.diffField']()}</th>
+											<th>{m['sync.diffMine']()}</th>
+											<th>{m['sync.diffTheirs']()}</th>
+										</tr>
+									</thead>
+									<tbody>
+										{#each diffs as diff (diff.column)}
+											<tr>
+												<th scope="row">{diff.label}</th>
+												<td>{diff.mine}</td>
+												<td>{diff.theirs}</td>
+											</tr>
+										{/each}
+									</tbody>
+								</table>
+							</div>
+						{/if}
+
+						<div class="actions">
+							<button
+								type="button"
+								class="banto-btn"
+								onclick={() => resolve(conflict, 'TAKE_MINE')}
+								disabled={resolvingId !== null || conflict.reason === 'INVOICED_FROZEN'}
+							>
+								{m['sync.takeMine']()}
+							</button>
+							<button
+								type="button"
+								class="banto-btn"
+								onclick={() => resolve(conflict, 'TAKE_THEIRS')}
+								disabled={resolvingId !== null}
+							>
+								{m['sync.takeTheirs']()}
+							</button>
+						</div>
+					</article>
+				{/each}
+			</section>
+		{/if}
 
 		<section class="panel">
 			<h2>{m['sync.settingsHeading']()}</h2>
@@ -304,5 +431,54 @@
 
 	.note--warn {
 		color: var(--banto-warning);
+	}
+
+	.conflict {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+		border: 1px solid var(--banto-border);
+		border-radius: var(--banto-radius-md);
+		padding: 0.75rem;
+	}
+
+	.conflict header {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		flex-wrap: wrap;
+	}
+
+	.chip {
+		font-size: 0.75rem;
+		color: var(--banto-text-muted);
+		border: 1px solid var(--banto-border);
+		border-radius: var(--banto-radius-sm);
+		padding: 0.05rem 0.4rem;
+	}
+
+	/* 列が多い衝突でも本文を横に押し広げない（スマホで効く）。 */
+	.diff {
+		overflow-x: auto;
+	}
+
+	.diff table {
+		border-collapse: collapse;
+		font-size: 0.8rem;
+		min-width: 100%;
+	}
+
+	.diff th,
+	.diff td {
+		border-bottom: 1px solid var(--banto-border);
+		padding: 0.3rem 0.5rem;
+		text-align: left;
+		vertical-align: top;
+	}
+
+	.diff thead th {
+		color: var(--banto-text-muted);
+		font-weight: 500;
+		white-space: nowrap;
 	}
 </style>

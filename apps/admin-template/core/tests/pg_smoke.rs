@@ -1098,8 +1098,8 @@ async fn the_sync_client_side_queries_work_on_postgres() {
         .expect("open_conflicts");
     assert_eq!(stored.len(), 1, "未解決が積み上がっている: {stored:?}");
     assert_eq!(stored[0].reason, ConflictReason::BothChanged);
-    assert_eq!(stored[0].local, local, "JSON の往復で行が変わっている");
-    assert_eq!(stored[0].incoming, incoming);
+    assert_eq!(stored[0].mine, local, "JSON の往復で行が変わっている");
+    assert_eq!(stored[0].theirs, incoming);
     assert!(
         !stored[0].detected_at.is_empty(),
         "検出日時が TEXT として入っていない"
@@ -1116,4 +1116,35 @@ async fn the_sync_client_side_queries_work_on_postgres() {
             .is_some(),
         "進捗を刻んだのに最終同期日時が返らない"
     );
+
+    // --- 解決（1件読む → 解決済みにする）---
+    //
+    // `mark_resolved` は `rows_affected()` を方言ごとのアームの中で呼ぶ
+    // （`QueryResult` の型が違う）。SQLite だけでは踏まない分岐。
+    let id = stored[0].id;
+    assert!(admin_template_core::sync::conflicts::get_conflict(&db, id)
+        .await
+        .expect("get_conflict")
+        .is_some());
+    admin_template_core::sync::conflicts::mark_resolved(&db, id)
+        .await
+        .expect("mark_resolved");
+    assert_eq!(
+        admin_template_core::sync::conflicts::open_conflict_count(&db)
+            .await
+            .expect("count"),
+        0,
+        "解決済みにしたのに未解決のまま"
+    );
+    assert!(
+        admin_template_core::sync::conflicts::get_conflict(&db, id)
+            .await
+            .expect("get_conflict")
+            .is_none(),
+        "解決済みが未解決として読めている"
+    );
+    // 二度目は「もう無い」。黙って成功させると、画面が消えた行を消したつもりになる。
+    assert!(admin_template_core::sync::conflicts::mark_resolved(&db, id)
+        .await
+        .is_err());
 }

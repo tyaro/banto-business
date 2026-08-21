@@ -49,6 +49,29 @@ export interface SyncOutcome {
 	openConflicts: number;
 }
 
+/** `admin_template_core::sync::rows::SyncRow`。値は文字列・数値・null のいずれか。 */
+export interface SyncRow {
+	table: string;
+	key: string;
+	values: Record<string, string | number | null>;
+}
+
+/** `admin_template_core::sync::conflicts::StoredConflict`。 */
+export interface StoredConflict {
+	id: number;
+	peerDeviceId: number;
+	table: string;
+	key: string;
+	reason: 'BOTH_CHANGED' | 'INVOICED_FROZEN';
+	/** この端末が持っている版。 */
+	mine: SyncRow;
+	/** 相手（PC）が持っている版。 */
+	theirs: SyncRow;
+	detectedAt: string;
+}
+
+export type Resolution = 'TAKE_MINE' | 'TAKE_THEIRS';
+
 export const DESKTOP_ONLY_MESSAGE = 'この画面はアプリでのみ利用できます';
 
 /** アプリ（Tauri）か。LAN ブラウザとデモは false。 */
@@ -107,4 +130,28 @@ export async function applySyncSettings(input: SyncSettingsInput): Promise<SyncS
  */
 export async function runSync(password?: string): Promise<SyncOutcome> {
 	return invokeCommand<SyncOutcome>('sync_run', password ? { password } : {});
+}
+
+/** 未解決の衝突。 */
+export async function listSyncConflicts(): Promise<StoredConflict[]> {
+	return invokeCommand<StoredConflict[]>('sync_conflicts_list');
+}
+
+/**
+ * 衝突を1件解決する。解決後の設定（未解決件数を含む）が返る。
+ *
+ * `TAKE_THEIRS` は手元に書くだけなので **PC に繋がらなくても解決できる**。
+ * `TAKE_MINE` は相手へ送り直すので、PC に届く必要があり、パスワードの控えが
+ * 無ければ `password` が要る。
+ */
+export async function resolveSyncConflict(
+	conflictId: number,
+	resolution: Resolution,
+	password?: string
+): Promise<SyncSettings> {
+	return invokeCommand<SyncSettings>('sync_conflict_resolve', {
+		conflictId,
+		resolution,
+		...(password ? { password } : {})
+	});
 }

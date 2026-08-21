@@ -352,7 +352,9 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 		// `sync_run` はアプリのプロセスの中でしか成立しない。
 		'sync_settings_get',
 		'sync_settings_apply',
-		'sync_run'
+		'sync_run',
+		'sync_conflicts_list',
+		'sync_conflict_resolve'
 	]);
 
 	// 読み取り系（list/get/status。§1 により両経路とも監査せず、対称強制の対象外）。

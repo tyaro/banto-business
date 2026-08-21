@@ -589,5 +589,16 @@
   "sync.adminOnlyDesc": "同期の設定はアプリ全体の設定です。管理者でログインしてください。",
   "sync.desktopOnlyTitle": "アプリでのみ利用できます",
   "sync.desktopOnlyDesc": "同期は話しかける側の端末でしか動きません。ブラウザからは利用できません。",
-  "sync.scopeNote": "同期するのは顧客・案件・工数・出張・経費と各マスタです。請求と入金は PC 専用で、同期しません。"
+  "sync.scopeNote": "同期するのは顧客・案件・工数・出張・経費と各マスタです。請求と入金は PC 専用で、同期しません。",
+  "sync.conflictsHeading": "未解決の衝突",
+  "sync.conflictsHint": "同じ行を両方の端末で直したものです。どちらを残すかを選んでください。選ぶまで、その行は両方とも今のままです。",
+  "sync.conflictInvoiced": "この行は請求済みです。請求書を取消してからでないと、この端末の版で上書きできません。",
+  "sync.conflictDeletedHere": "この端末では削除されています。",
+  "sync.conflictDeletedThere": "PC 側では削除されています。",
+  "sync.diffField": "項目",
+  "sync.diffMine": "この端末",
+  "sync.diffTheirs": "PC",
+  "sync.takeMine": "この端末を採る",
+  "sync.takeTheirs": "PC を採る",
+  "sync.resolveError": "解決できませんでした。"
 }
