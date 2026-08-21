@@ -132,6 +132,18 @@ async fn main() {
     let users = UsersService::new(db.clone());
     let settings = SettingsService::new(db.clone());
     let sync = SyncService::new(db.clone(), settings.clone());
+
+    // Phase 8: この端末の採番レンジを、**データを作る前に**適用する
+    // （`docs/domain/sync.md` 3.1）。設定が読めないときは起動しない ——
+    // 理由は `sync::apply_device_range_at_startup` の doc を参照。
+    let device_id = admin_template_core::sync::apply_device_range_at_startup(&db, &settings)
+        .await
+        .unwrap_or_else(|err| {
+            panic!(
+                "同期のデバイス番号（設定キー {}）が読めないため起動できません: {err}",
+                admin_template_core::sync::DEVICE_ID_KEY
+            )
+        });
     // 発行者情報は Banto の `settings` を入れ物として使う（専用テーブルを
     // 作らない。CLAUDE.md 第2章）。
     let issuer = IssuerService::new(settings.clone());
@@ -227,6 +239,13 @@ async fn main() {
         .expect("server should start");
 
     println!("banto-serve: DB at {db_path}");
+    // 2台目を「スマホ役」として動かすときに、どちらのレンジで採番して
+    // いるかが一目で分かるようにする（`docs/android-build.md`）。
+    println!(
+        "banto-serve: sync device {device_id} (ids {}..={})",
+        admin_template_core::sync::range_start(device_id),
+        admin_template_core::sync::range_end(device_id)
+    );
     println!("banto-serve: listening at:");
     for url in lan_urls(server.local_addr().port()) {
         println!("  {url}");

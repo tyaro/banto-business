@@ -428,6 +428,32 @@ pub async fn record_peer_progress(
     .map_err(banto_storage::storage_error)
 }
 
+/// 起動時に、この端末のデバイス番号を読んで採番レンジを適用する。
+///
+/// **データを1行でも作る前に呼ぶこと。** これを忘れた端末は既定（PC）の
+/// レンジで採番を始め、同期して初めて衝突に気付く —— その時点では両方に
+/// 行が入っており、機械的に直せない。
+///
+/// ## 壊れた設定では起動しない
+///
+/// [`stored_device_id`] は読めない値をエラーにする（既定へ倒さない）。
+/// ここでもそのまま返す。呼び出し側は**起動を止める**こと。
+///
+/// 起動を止めるのは重い判断だが、代わりに「読めないので 0 として続ける」を
+/// 選ぶと、番号を書き損じたスマホが PC のレンジで採番を始める。止まれば
+/// 設定を直すだけで復帰できるが、混ざった id は戻せない。
+///
+/// 番号 0（PC）のときは何もしない —— 既定レンジが 1〜 で、そのまま正しく
+/// 採番される。既存 DB の採番カウンタを無用に触らない。
+pub async fn apply_device_range_at_startup(
+    db: &Db,
+    settings: &crate::settings::SettingsService,
+) -> Result<i64, BantoError> {
+    let device_id = stored_device_id(settings).await?;
+    ensure_id_range(db, device_id).await?;
+    Ok(device_id)
+}
+
 /// 採番カウンタをこの端末のレンジ先頭まで進める。
 ///
 /// SQLite の `AUTOINCREMENT` は `sqlite_sequence.seq` の次の値を採番するので、
@@ -598,6 +624,61 @@ mod tests {
 
         settings.set(DEVICE_ID_KEY, "-5").await.expect("set");
         assert!(stored_device_id(&settings).await.is_err());
+    }
+
+    // --- 起動時のレンジ適用 ---
+
+    /// 番号を設定した端末が、起動後その番号のレンジで採番すること。
+    #[tokio::test]
+    async fn startup_applies_the_configured_range_before_any_row_exists() {
+        let db = migrate_memory().await.unwrap();
+        let settings = SettingsService::new(db.clone());
+        set_device_id(&settings, 1).await.expect("set");
+
+        let applied = apply_device_range_at_startup(&db, &settings)
+            .await
+            .expect("startup");
+        assert_eq!(applied, 1);
+
+        let created = CustomersService::new(db.clone())
+            .create(customer_input("C001", "架空商事"))
+            .await
+            .expect("create");
+        assert_eq!(
+            owning_device(created.id),
+            1,
+            "起動時にレンジを当てていれば、最初の1行から相手のレンジに入る"
+        );
+    }
+
+    /// 既定（PC）は何もしなくても 1〜 で採番する。
+    #[tokio::test]
+    async fn startup_leaves_the_pc_numbering_from_one() {
+        let db = migrate_memory().await.unwrap();
+        let settings = SettingsService::new(db.clone());
+
+        assert_eq!(
+            apply_device_range_at_startup(&db, &settings)
+                .await
+                .expect("startup"),
+            DEFAULT_DEVICE_ID
+        );
+        let created = CustomersService::new(db.clone())
+            .create(customer_input("C001", "架空商事"))
+            .await
+            .expect("create");
+        assert_eq!(created.id, 1);
+    }
+
+    /// **壊れた設定では起動できないこと。** ここで既定へ倒すと、番号を
+    /// 書き損じたスマホが PC のレンジで採番を始め、同期して初めて気付く。
+    #[tokio::test]
+    async fn startup_refuses_to_continue_on_a_corrupt_device_id() {
+        let db = migrate_memory().await.unwrap();
+        let settings = SettingsService::new(db.clone());
+        settings.set(DEVICE_ID_KEY, "one").await.expect("set");
+
+        assert!(apply_device_range_at_startup(&db, &settings).await.is_err());
     }
 
     // --- outbox（記録は DB トリガ） ---
