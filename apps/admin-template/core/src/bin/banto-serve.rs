@@ -47,6 +47,7 @@ use admin_template_core::profitability::ProfitabilityService;
 use admin_template_core::projects::ProjectsService;
 use admin_template_core::rest::{api_router, audited_credential_verifier, Services};
 use admin_template_core::settings::SettingsService;
+use admin_template_core::sync::protocol::SyncService;
 use admin_template_core::system_info::SystemInfoService;
 use admin_template_core::trips::TripsService;
 use admin_template_core::users::UsersService;
@@ -130,6 +131,7 @@ async fn main() {
     let payments = PaymentsService::new(db.clone()).with_events(events.clone());
     let users = UsersService::new(db.clone());
     let settings = SettingsService::new(db.clone());
+    let sync = SyncService::new(db.clone(), settings.clone());
     // 発行者情報は Banto の `settings` を入れ物として使う（専用テーブルを
     // 作らない。CLAUDE.md 第2章）。
     let issuer = IssuerService::new(settings.clone());
@@ -208,6 +210,7 @@ async fn main() {
         invoices,
         issuer,
         payments,
+        sync,
         users,
         settings,
         audit,

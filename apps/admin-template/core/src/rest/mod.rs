@@ -64,6 +64,8 @@
 //! | DELETE | `/api/payments/{id}` | -              | 204 (editor+)               |
 //! | GET    | `/api/settlements/{id}` | -           | `InvoiceSettlement` (any role, id は請求書 id・導出値) |
 //! | POST   | `/api/outstanding/list` | `ListParams` | `ListResult<InvoiceSettlement>` (any role, 未入金一覧) |
+//! | POST   | `/api/sync/handshake` | `HandshakeRequest` | `Handshake` (any role, デバイス番号と進捗) |
+//! | POST   | `/api/sync/pull`     | `PullRequest`  | `Pull` (any role, PC 側で変わった行) |
 //! | GET    | `/api/users`         | -              | `UserSummary[]` (admin) |
 //! | POST   | `/api/users`         | `{username,password,displayName,role}` | `UserIdentityResponse` (admin) |
 //! | PUT    | `/api/users/{id}`    | `{displayName,role}` | `UserSummary` (admin) |
@@ -185,6 +187,14 @@
 //! under the service's own fixed `restore-pending.sqlite3` name - see
 //! `crate::backup::BackupService::stage_restore_from_bytes`).
 //!
+//! `/api/sync/*` (Phase 8, `docs/domain/sync.md` 11節): スマホ（Pixel）が
+//! 自宅 LAN に戻ったときに PC へ話しかけるための入口。**この段は読み取り
+//! だけ**で、PC 側の DB を一切書き換えない —— スマホ側の変更を取り込む
+//! push は次段。したがって監査もしない（読み取りは監査しない、conventions
+//! §1）。話しかける向きが常にスマホ → PC の一方向なので、Tauri 側に対と
+//! なるコマンドは無い（PC は受けるだけ、スマホは HTTP クライアント
+//! として呼ぶだけ）。
+//!
 //! `/api/attachments/*` (spec `docs/attachments-plan.md` §3.5, M20 unit B):
 //! same read/write RBAC split as the domain routes (`viewer`+ read,
 //! `editor`+ write),
@@ -242,6 +252,7 @@ use crate::payments::{InvoiceSettlement, Payment, PaymentDetail, PaymentInput, P
 use crate::profitability::{ProfitabilityService, ProjectProfitability};
 use crate::projects::{Project, ProjectInput, ProjectsService};
 use crate::settings::SettingsService;
+use crate::sync::protocol::{Handshake, HandshakeRequest, Pull, PullRequest, SyncService};
 use crate::system_info::SystemInfoService;
 use crate::trips::{Trip, TripGenerationResult, TripInput, TripsService};
 use crate::users::{Role, UsersService};
@@ -257,6 +268,7 @@ mod masters;
 mod payments;
 mod profitability;
 mod projects;
+mod sync;
 #[cfg(test)]
 mod tests;
 mod trips;
@@ -279,6 +291,7 @@ use masters::masters_router;
 use payments::payments_router;
 use profitability::profitability_router;
 use projects::projects_router;
+use sync::sync_router;
 use trips::trips_router;
 use work_logs::work_logs_router;
 
@@ -322,6 +335,8 @@ pub struct Services {
     pub issuer: IssuerService,
     /// Business ドメイン（Phase 6 入金管理）。
     pub payments: PaymentsService,
+    /// Business ドメイン（Phase 8 デバイス間同期）。この段は読み取り専用。
+    pub sync: SyncService,
     pub users: UsersService,
     pub settings: SettingsService,
     pub audit: AuditLogService,
@@ -360,6 +375,7 @@ pub fn api_router(
         invoices,
         issuer,
         payments,
+        sync,
         users,
         settings,
         audit,
@@ -401,6 +417,7 @@ pub fn api_router(
         .merge(invoices_router(invoices, audit.clone(), auth.clone()))
         .merge(issuer_router(issuer, audit.clone(), auth.clone()))
         .merge(payments_router(payments, audit.clone(), auth.clone()))
+        .merge(sync_router(sync, auth.clone()))
         .merge(users_router(users, audit.clone(), auth.clone()))
         .merge(audit_log_router(
             audit.clone(),

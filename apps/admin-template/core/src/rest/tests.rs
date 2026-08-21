@@ -89,6 +89,7 @@ async fn router_with_role_tokens() -> (Router, String, String, String) {
     let (tx, _rx) = broadcast::channel(16);
     let users = UsersService::new(pool.clone());
     let settings = SettingsService::new(pool.clone());
+    let sync = SyncService::new(pool.clone(), settings.clone());
     let backup = unused_backup_service(pool.clone());
     let attachments = unused_attachments_service(pool.clone());
     let system_info = SystemInfoService::new(pool.clone());
@@ -146,6 +147,7 @@ async fn router_with_role_tokens() -> (Router, String, String, String) {
         invoices,
         issuer,
         payments,
+        sync,
         users,
         settings,
         audit,
@@ -177,6 +179,7 @@ async fn router_with_token() -> (Router, String) {
     let (tx, _rx) = broadcast::channel(16);
     let users = UsersService::new(pool.clone());
     let settings = SettingsService::new(pool.clone());
+    let sync = SyncService::new(pool.clone(), settings.clone());
     let backup = unused_backup_service(pool.clone());
     let attachments = unused_attachments_service(pool.clone());
     let system_info = SystemInfoService::new(pool.clone());
@@ -198,6 +201,7 @@ async fn router_with_token() -> (Router, String) {
         invoices,
         issuer,
         payments,
+        sync,
         users,
         settings,
         audit,
@@ -265,6 +269,7 @@ async fn update_via_rest_is_observable_on_the_event_channel() {
     let issuer = IssuerService::new(SettingsService::new(pool.clone()));
     let users = UsersService::new(pool.clone());
     let settings = SettingsService::new(pool.clone());
+    let sync = SyncService::new(pool.clone(), settings.clone());
     let backup = unused_backup_service(pool.clone());
     let attachments = unused_attachments_service(pool.clone());
     let system_info = SystemInfoService::new(pool.clone());
@@ -283,6 +288,7 @@ async fn update_via_rest_is_observable_on_the_event_channel() {
         invoices,
         issuer,
         payments,
+        sync,
         users,
         settings,
         audit,
@@ -364,6 +370,7 @@ async fn router_with_setup(allow_setup: bool) -> Router {
     let (tx, _rx) = broadcast::channel(16);
     let users = UsersService::new(pool.clone());
     let settings = SettingsService::new(pool.clone());
+    let sync = SyncService::new(pool.clone(), settings.clone());
     let backup = unused_backup_service(pool.clone());
     let attachments = unused_attachments_service(pool.clone());
     let system_info = SystemInfoService::new(pool.clone());
@@ -381,6 +388,7 @@ async fn router_with_setup(allow_setup: bool) -> Router {
         invoices,
         issuer,
         payments,
+        sync,
         users,
         settings,
         audit,
@@ -589,6 +597,7 @@ async fn router_with_real_login(allow_setup: bool) -> (Router, AuditLogService) 
     let (tx, _rx) = broadcast::channel(16);
     let users = UsersService::new(pool.clone());
     let settings = SettingsService::new(pool.clone());
+    let sync = SyncService::new(pool.clone(), settings.clone());
     let backup = unused_backup_service(pool.clone());
     let attachments = unused_attachments_service(pool.clone());
     let system_info = SystemInfoService::new(pool.clone());
@@ -606,6 +615,7 @@ async fn router_with_real_login(allow_setup: bool) -> (Router, AuditLogService) 
         invoices,
         issuer,
         payments,
+        sync,
         users,
         settings,
         audit: audit.clone(),
@@ -957,6 +967,7 @@ async fn router_with_role_tokens_and_audit() -> (Router, AuditLogService, String
     let (tx, _rx) = broadcast::channel(16);
     let users = UsersService::new(pool.clone());
     let settings = SettingsService::new(pool.clone());
+    let sync = SyncService::new(pool.clone(), settings.clone());
     let backup = unused_backup_service(pool.clone());
     let attachments = unused_attachments_service(pool.clone());
     let system_info = SystemInfoService::new(pool.clone());
@@ -1001,6 +1012,7 @@ async fn router_with_role_tokens_and_audit() -> (Router, AuditLogService, String
         invoices,
         issuer,
         payments,
+        sync,
         users,
         settings,
         audit: audit.clone(),
@@ -1057,6 +1069,7 @@ async fn router_with_role_tokens_and_backup() -> (Router, tempfile::TempDir, Str
     let (tx, _rx) = broadcast::channel(16);
     let users = UsersService::new(db.clone());
     let settings = SettingsService::new(db.clone());
+    let sync = SyncService::new(db.clone(), settings.clone());
     let backup = BackupService::new(db_path, db.clone());
     let attachments = AttachmentsService::new(db.clone(), dir.path().join("attachments"));
     let system_info = SystemInfoService::new(db.clone());
@@ -1101,6 +1114,7 @@ async fn router_with_role_tokens_and_backup() -> (Router, tempfile::TempDir, Str
         invoices,
         issuer,
         payments,
+        sync,
         users,
         settings,
         audit,
@@ -2171,6 +2185,7 @@ async fn attachment_upload_and_delete_are_observable_on_the_event_channel() {
     let (tx, mut rx) = broadcast::channel(16);
     let users = UsersService::new(pool.clone());
     let settings = SettingsService::new(pool.clone());
+    let sync = SyncService::new(pool.clone(), settings.clone());
     let backup = unused_backup_service(pool.clone());
     let dir = tempdir().expect("tempdir");
     let attachments = AttachmentsService::new(pool.clone(), dir.path().join("attachments"));
@@ -2190,6 +2205,7 @@ async fn attachment_upload_and_delete_are_observable_on_the_event_channel() {
         invoices,
         issuer,
         payments,
+        sync,
         users,
         settings,
         audit,
@@ -3083,4 +3099,142 @@ async fn editor_records_a_payment_and_the_invoice_settles() {
         .await
         .unwrap();
     assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+}
+
+// --- Phase 8 デバイス間同期（docs/domain/sync.md 11節） ---
+//
+// PC 側は受けるだけで、この段は**読み取りのみ**。認証は要るがロール床は
+// 無く（返る中身は既存の `*_list` と同じ）、監査もしない（読み取りは
+// 監査しない、conventions §1）。
+
+#[tokio::test]
+async fn sync_requires_authentication() {
+    let (router, _admin, _editor, _viewer) = router_with_role_tokens().await;
+    let response = router
+        .oneshot(post_json("/api/sync/pull", json!({ "afterSeq": 0 })))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// 読み取りなのでロール床は無い（`viewer` で通る）。
+#[tokio::test]
+async fn viewer_can_handshake_and_pull() {
+    let (router, _admin, _editor, viewer) = router_with_role_tokens().await;
+
+    let response = router
+        .clone()
+        .oneshot(post_json_auth(
+            "/api/sync/handshake",
+            &viewer,
+            json!({ "peerDeviceId": 1 }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_json(response).await;
+    assert_eq!(body["deviceId"], 0);
+    assert_eq!(body["outboxHead"], 0);
+    assert_eq!(body["receivedThroughSeq"], 0);
+    assert_eq!(body["tables"].as_array().expect("tables").len(), 8);
+
+    let response = router
+        .oneshot(post_json_auth(
+            "/api/sync/pull",
+            &viewer,
+            json!({ "afterSeq": 0 }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(body_json(response).await["rows"], json!([]));
+}
+
+/// **同じデバイス番号を名乗る相手は 422 で断る。** 番号が同じということは
+/// id の採番レンジが分かれておらず、そのまま同期すると別々の行が同じ id を
+/// 持ったまま混ざる（docs/domain/sync.md 3節）。
+#[tokio::test]
+async fn a_peer_claiming_the_same_device_number_is_rejected() {
+    let (router, _admin, _editor, viewer) = router_with_role_tokens().await;
+    let response = router
+        .oneshot(post_json_auth(
+            "/api/sync/handshake",
+            &viewer,
+            json!({ "peerDeviceId": 0 }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+/// REST 経由で作った行が、そのまま同期の行として引けること。
+/// 列名は DB の綴り（スネークケース）のまま運ばれる。
+#[tokio::test]
+async fn a_row_created_over_rest_is_pullable() {
+    let (router, _admin, editor, viewer) = router_with_role_tokens().await;
+
+    let created = router
+        .clone()
+        .oneshot(post_json_auth(
+            "/api/customers",
+            &editor,
+            customer_payload("C001"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(created.status(), StatusCode::OK);
+    let id = body_json(created).await["id"].as_i64().expect("id");
+
+    let response = router
+        .oneshot(post_json_auth(
+            "/api/sync/pull",
+            &viewer,
+            json!({ "afterSeq": 0 }),
+        ))
+        .await
+        .unwrap();
+    let body = body_json(response).await;
+    let rows = body["rows"].as_array().expect("rows");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["table"], "customers");
+    assert_eq!(rows[0]["key"], id.to_string());
+    assert_eq!(rows[0]["values"]["name"], "架空商事");
+    // 未設定の任意項目は素の null（空文字に化けない）。
+    assert_eq!(rows[0]["values"]["note"], serde_json::Value::Null);
+    assert_eq!(rows[0]["values"]["deleted_at"], serde_json::Value::Null);
+    assert!(body["throughSeq"].as_i64().expect("throughSeq") > 0);
+    assert_eq!(body["throughSeq"], body["headSeq"]);
+}
+
+/// 読み取りは監査しない（conventions §1）。
+#[tokio::test]
+async fn sync_reads_are_not_audited() {
+    let (router, audit, admin, _editor, viewer) = router_with_role_tokens_and_audit().await;
+
+    router
+        .clone()
+        .oneshot(post_json_auth(
+            "/api/sync/handshake",
+            &viewer,
+            json!({ "peerDeviceId": 1 }),
+        ))
+        .await
+        .unwrap();
+    router
+        .clone()
+        .oneshot(post_json_auth(
+            "/api/sync/pull",
+            &viewer,
+            json!({ "afterSeq": 0 }),
+        ))
+        .await
+        .unwrap();
+
+    let _ = admin;
+    let entries = audit.list(ListParams::default()).await.expect("audit list");
+    assert!(
+        entries.rows.iter().all(|entry| entry.resource != "sync"),
+        "同期の読み取りは監査に残らないこと: {:?}",
+        entries.rows
+    );
 }

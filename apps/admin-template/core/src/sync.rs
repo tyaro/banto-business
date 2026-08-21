@@ -23,6 +23,9 @@ use banto_core::{BantoError, FieldError};
 use banto_storage::Db;
 use serde::{Deserialize, Serialize};
 
+pub mod protocol;
+pub mod rows;
+
 /// デバイス番号を保持する設定キー。
 pub const DEVICE_ID_KEY: &str = "sync.device.id";
 
@@ -259,6 +262,73 @@ pub async fn outbox_head(db: &Db) -> Result<i64, BantoError> {
         Db::Postgres(pool) => sqlx::query_scalar::<_, i64>(SQL).fetch_one(pool).await,
     }
     .map_err(banto_storage::storage_error)
+}
+
+/// 相手端末ごとの同期の進捗（`sync_state`、`docs/domain/sync.md` 4節）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct PeerState {
+    #[sqlx(rename = "peer_device_id")]
+    pub peer_device_id: i64,
+    /// 自分の outbox のうち、相手へ送り終えたと記録している最後の seq。
+    ///
+    /// **同期の判断には使わない。** どこまで届いたかを正しく知っているのは
+    /// 受け取った側だけなので、送る量はいつも相手が指定する `after_seq` で
+    /// 決める（`protocol` モジュールの冒頭を参照）。ここにあるのは
+    /// 「前回どこまで送ったか」の控えで、用途は診断のみ。
+    #[sqlx(rename = "sent_through_seq")]
+    pub sent_through_seq: i64,
+    /// 相手の outbox のうち、こちらが取り込み終えた最後の seq。
+    #[sqlx(rename = "received_through_seq")]
+    pub received_through_seq: i64,
+    #[sqlx(rename = "last_synced_at")]
+    pub last_synced_at: Option<String>,
+}
+
+impl PeerState {
+    /// まだ一度も同期していない相手。
+    pub fn unsynced(peer_device_id: i64) -> Self {
+        Self {
+            peer_device_id,
+            sent_through_seq: 0,
+            received_through_seq: 0,
+            last_synced_at: None,
+        }
+    }
+}
+
+/// 相手端末の進捗を読む。行が無ければ [`PeerState::unsynced`]。
+///
+/// 行が無いことを**エラーにしない**のは、初回の同期がまさにその状態だから。
+/// 0 から引き直すのは正しい振る舞いで、多く送るだけで壊れない。
+pub async fn peer_state(db: &Db, peer_device_id: i64) -> Result<PeerState, BantoError> {
+    if !is_valid_device_id(peer_device_id) {
+        return Err(invalid_device_id(peer_device_id));
+    }
+    let dialect = db.dialect();
+    let sql = format!(
+        "SELECT peer_device_id, sent_through_seq, received_through_seq, last_synced_at \
+         FROM sync_state WHERE peer_device_id = {}",
+        dialect.placeholder(1)
+    );
+    let found = match db {
+        Db::Sqlite(pool) => {
+            sqlx::query_as::<_, PeerState>(&sql)
+                .bind(peer_device_id)
+                .fetch_optional(pool)
+                .await
+        }
+        #[cfg(feature = "postgres")]
+        Db::Postgres(pool) => {
+            sqlx::query_as::<_, PeerState>(&sql)
+                .bind(peer_device_id)
+                .fetch_optional(pool)
+                .await
+        }
+    }
+    .map_err(banto_storage::storage_error)?;
+
+    Ok(found.unwrap_or_else(|| PeerState::unsynced(peer_device_id)))
 }
 
 /// 採番カウンタをこの端末のレンジ先頭まで進める。

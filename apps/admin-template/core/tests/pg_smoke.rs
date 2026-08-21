@@ -29,6 +29,8 @@ use admin_template_core::payments::{PaymentAllocationInput, PaymentInput, Paymen
 use admin_template_core::profitability::ProfitabilityService;
 use admin_template_core::projects::{ProjectInput, ProjectsService};
 use admin_template_core::settings::SettingsService;
+use admin_template_core::sync::protocol::{HandshakeRequest, PullRequest, SyncService};
+use admin_template_core::sync::rows::{ColumnKind, SyncValue, SYNCED_TABLES};
 use admin_template_core::users::{Role, UsersService};
 use admin_template_core::work_logs::{WorkLogInput, WorkLogsService};
 use banto_core::ListParams;
@@ -708,4 +710,126 @@ async fn the_outbox_trigger_records_changes_on_postgres() {
         .find(|e| e.table_name == "cost_rates")
         .unwrap_or_else(|| panic!("レートの変更が記録されていない: {entries:?}"));
     assert_eq!(rate.row_key, "DESIGN");
+}
+
+/// **列目録が PostgreSQL のスキーマとも一致していること**、そして
+/// `POST /api/sync/pull` の中身（`SyncService::pull`）が PostgreSQL でも
+/// 同じ行を返すこと。
+///
+/// SQLite 側の同名テストと役割が違う。目録は「列名 + 型」を宣言していて、
+/// 整数列が両方言とも 64bit（SQLite `INTEGER` / PostgreSQL `BIGINT`）である
+/// ことに依存している。`INTEGER`（int4）が1本でも混ざると sqlx の型検査で
+/// 落ちるが、SQLite だけを見ていても気付けない。
+#[tokio::test]
+async fn the_sync_manifest_and_pull_work_on_postgres() {
+    let Ok(url) = std::env::var("BANTO_TEST_PG_URL") else {
+        eprintln!("pg_smoke: BANTO_TEST_PG_URL unset - skipping (no PostgreSQL server)");
+        return;
+    };
+    // 同じ DB を共有するので直列化する（`PG_SMOKE_LOCK` の doc を参照）。
+    let _serialized = PG_SMOKE_LOCK.lock().await;
+
+    reset_schema(&url).await;
+    let db = init_db_from_target(&url)
+        .await
+        .expect("init_db_from_target should succeed");
+
+    // --- 目録 vs 実スキーマ ---
+    for spec in &SYNCED_TABLES {
+        let actual: Vec<(String, String)> = sqlx::query_as(
+            "SELECT column_name, data_type FROM information_schema.columns \
+             WHERE table_schema = 'public' AND table_name = $1",
+        )
+        .bind(spec.name)
+        .fetch_all(db.as_postgres().expect("postgres pool"))
+        .await
+        .expect("information_schema");
+        assert!(!actual.is_empty(), "{} が存在しない", spec.name);
+
+        let mut actual: Vec<(String, ColumnKind)> = actual
+            .into_iter()
+            .map(|(name, data_type)| {
+                let kind = match data_type.as_str() {
+                    "bigint" => ColumnKind::Int,
+                    "text" => ColumnKind::Text,
+                    other => panic!("{}.{name} が想定外の型: {other}", spec.name),
+                };
+                (name, kind)
+            })
+            .collect();
+        let mut declared: Vec<(String, ColumnKind)> = spec
+            .columns
+            .iter()
+            .map(|(name, kind)| ((*name).to_string(), *kind))
+            .collect();
+        actual.sort();
+        declared.sort();
+        assert_eq!(
+            declared, actual,
+            "{} の列目録が PostgreSQL のスキーマとずれている",
+            spec.name
+        );
+    }
+
+    // --- pull が同じ行を返すこと ---
+    let customers = CustomersService::new(db.clone());
+    let customer = customers
+        .create(range_customer("PG-S001", "架空商事"))
+        .await
+        .expect("customer");
+    let projects = ProjectsService::new(db.clone());
+    projects
+        .create(ProjectInput {
+            code: "PG-SYNC-1".to_string(),
+            customer_id: customer.id,
+            name: "架空案件".to_string(),
+            status: "IN_PROGRESS".to_string(),
+            started_on: None,
+            due_on: None,
+            estimate_amount: None,
+            contract_amount: None,
+            billing_hourly_rate: None,
+            scope: None,
+            note: None,
+        })
+        .await
+        .expect("project");
+
+    let sync = SyncService::new(db.clone(), SettingsService::new(db.clone()));
+    let shaken = sync
+        .handshake(HandshakeRequest { peer_device_id: 1 })
+        .await
+        .expect("handshake on postgres");
+    assert_eq!(shaken.device_id, 0);
+    assert!(shaken.outbox_head > 0);
+
+    let pulled = sync
+        .pull(PullRequest { after_seq: 0 })
+        .await
+        .expect("pull on postgres");
+    // 親が先（受け側がこの順に流し込める）。
+    let tables: Vec<&str> = pulled.rows.iter().map(|r| r.table.as_str()).collect();
+    assert_eq!(tables, vec!["customers", "projects"]);
+    assert_eq!(
+        pulled.rows[0].get("name"),
+        Some(&SyncValue::Text("架空商事".to_string()))
+    );
+    // 任意項目の NULL が NULL のまま運ばれること。
+    assert_eq!(pulled.rows[0].get("note"), Some(&SyncValue::Null));
+    assert_eq!(pulled.rows[0].get("deleted_at"), Some(&SyncValue::Null));
+    assert!(!pulled.has_more());
+
+    // 論理削除は墓石として届く。
+    projects
+        .delete(pulled.rows[1].key.parse::<i64>().expect("project id"))
+        .await
+        .expect("delete project");
+    let after = sync
+        .pull(PullRequest {
+            after_seq: pulled.through_seq,
+        })
+        .await
+        .expect("pull after delete");
+    assert_eq!(after.rows.len(), 1);
+    assert!(after.rows[0].is_deleted());
 }

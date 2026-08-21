@@ -429,7 +429,12 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 		'POST /api/work_categories/list',
 		'POST /api/expense_categories/list',
 		'POST /api/audit-log/list',
-		'POST /api/attachments/list'
+		'POST /api/attachments/list',
+		// Phase 8 同期（docs/domain/sync.md 11節）。PC 側は受けるだけで、
+		// 話しかける向きが常にスマホ → PC の一方向。この段は読み取りのみ
+		// （PC の DB を書き換えない）なので Tauri コマンドの対は無い。
+		'POST /api/sync/handshake',
+		'POST /api/sync/pull'
 	]);
 
 	// --- 一次情報のパース ---
