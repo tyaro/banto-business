@@ -22,6 +22,27 @@
 	--shadow-lg: var(--banto-shadow-lg);
 }
 
+/* セーフエリア（Phase 8 ステップ5）。
+   Android は edge-to-edge で描画するので、ステータスバー・ナビゲーション
+   バー・カメラの切り欠きの下にも中身が入る。**画面側で避けないと、左上の
+   メニューがステータスバーの時計と重なって押せない**（実機で確認）。
+
+   `env()` を各コンポーネントに直書きせず、ここで1度だけ変数にする。
+   直書きすると「どこで避けているか」が散らばり、新しい固定要素を足した
+   ときに漏れる。既定値 0 なのでデスクトップのブラウザでは何も変わらない。
+
+   有効にするには `app.html` の viewport に `viewport-fit=cover` が要る
+   （無いと env() は常に 0）。両方揃って初めて効くので、片方だけ直さない。
+
+   Banto の名前空間（`--banto-*`）を使わないのは、これがアプリ側の追加で
+   あるため。`packages/theme` へ上げるときに改名する（docs/banto-feedback.md）。 */
+:root {
+	--app-safe-top: env(safe-area-inset-top, 0px);
+	--app-safe-right: env(safe-area-inset-right, 0px);
+	--app-safe-bottom: env(safe-area-inset-bottom, 0px);
+	--app-safe-left: env(safe-area-inset-left, 0px);
+}
+
 body {
 	margin: 0;
 	min-height: 100vh;

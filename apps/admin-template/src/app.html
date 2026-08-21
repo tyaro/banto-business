@@ -3,7 +3,13 @@
 	<head>
 		<meta charset="utf-8" />
 		<link rel="icon" href="%sveltekit.assets%/favicon.svg" />
-		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<!-- `viewport-fit=cover` は Android / iOS の edge-to-edge 描画で
+		     `env(safe-area-inset-*)` を有効にするために要る。**これが無いと
+		     inset は常に 0 を返す**ので、app.css のセーフエリア用トークンが
+		     すべて 0 になり、ステータスバーの下にヘッダが潜り込む
+		     （Phase 8 ステップ5、実機で確認）。デスクトップのブラウザには
+		     影響しない（inset が無いので 0 のまま）。 -->
+		<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 		<!-- PWA installable-only (M-review 2026-08 §2.8): a web manifest + icons
 		     so the LAN-browser build can be "Add to Home Screen"/installed. No
 		     service worker (no offline scope). `%sveltekit.assets%` keeps the

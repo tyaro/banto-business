@@ -103,6 +103,13 @@
 		flex-shrink: 0;
 		display: flex;
 		flex-direction: column;
+		/* セーフエリア（app.css）。**常設表示のときも要る** —— 開いた Fold の
+		   内側はタブレット寸法で、サイドバーが畳まれずに画面の左端＝
+		   ステータスバーの真下から始まるため。下はジェスチャーバー。 */
+		padding-top: var(--app-safe-top);
+		padding-bottom: var(--app-safe-bottom);
+		padding-left: var(--app-safe-left);
+		box-sizing: border-box;
 		background: var(--banto-surface);
 		border-right: 1px solid var(--banto-border);
 		transition: width var(--banto-duration-base) var(--banto-ease-out);
