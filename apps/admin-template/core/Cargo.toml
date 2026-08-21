@@ -53,6 +53,13 @@ axum = { workspace = true }
 # `runtime-tokio` feature, but naming it explicitly here means this crate
 # does not silently depend on another dependency's feature choices.
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "signal", "fs"] }
+# Phase 8 同期のクライアント側（`src/sync/http_peer.rs`）。**依存グラフに
+# クレートは増えない** —— `tauri` が既に同じ版を、TLS 機能なし（hyper のみ）
+# で引いている。`docs/domain/sync.md` 9節が避けたいのは「ビルドを重くする」
+# 「TLS スタックを持ち込む」ことなので、`default-features = false` のまま
+# 名指しするのは意図に沿う（TLS は `ADR-0003` どおりリバースプロキシ終端で、
+# LAN 内は平文）。
+reqwest = { workspace = true }
 rust-embed = { workspace = true, optional = true }
 futures-util = { workspace = true }
 

@@ -3361,3 +3361,112 @@ async fn a_push_is_audited_with_counts_only() {
         json!({ "applied": 0, "unchanged": 0, "conflicts": 0, "receivedThroughSeq": 3 })
     );
 }
+
+// --- Phase 8: 同期クライアントを実サーバへ当てる ---
+
+/// スマホ側の [`crate::sync::http_peer::HttpPeer`] が、**この router**
+/// （＝実物の `/api/auth/login` と `/api/sync/*`）に対して1往復できる。
+///
+/// ## なぜプロセス内の相手役では足りないか
+///
+/// `sync::client` のテストは同じプロセスの `SyncService` を相手にしていて、
+/// 確かめているのは手順だけ。HTTP を挟むと**その手順以外**が効いてくる ——
+/// CSRF ヘッダ（無いと 403）、Bearer トークン（無いと 401）、経路の綴り、
+/// ログイン失敗が 200 + `{success:false}` で返ること。どれも綴り違いで
+/// 静かに壊れ、実機に入れるまで気付けない。
+///
+/// 実際に TCP で待ち受けるのは、`reqwest` が本当に送る形（ヘッダの大文字
+/// 小文字・本文の並び）で通ることを確かめるため。`oneshot` では
+/// `reqwest` を通らない。
+#[tokio::test]
+async fn the_sync_client_completes_a_round_trip_against_the_real_router() {
+    use crate::db::migrate_memory as migrate;
+    use crate::settings::SettingsService;
+    use crate::sync::client::run_sync;
+    use crate::sync::http_peer::{HttpPeer, PeerCredentials};
+    use crate::sync::protocol::SyncService as ProtocolSyncService;
+    use crate::sync::{ensure_id_range, set_device_id};
+
+    // --- PC（この router）に顧客を1件入れておく ---
+    let (router, token) = router_with_token().await;
+    let created = router
+        .clone()
+        .oneshot(post_json_auth(
+            "/api/customers",
+            &token,
+            customer_payload("C001"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(created.status(), StatusCode::OK);
+
+    // --- 実際に待ち受ける ---
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base_url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+
+    // --- スマホ（番号 1）を用意して同期する ---
+    let phone_db = migrate().await.expect("migrate");
+    let phone_settings = SettingsService::new(phone_db.clone());
+    set_device_id(&phone_settings, 1).await.expect("device id");
+    ensure_id_range(&phone_db, 1).await.expect("range");
+    let phone = ProtocolSyncService::new(phone_db.clone(), phone_settings.clone());
+
+    // 末尾のスラッシュを落とすこと自体も確かめる（設定へ手で打つ値）。
+    let peer = HttpPeer::connect(
+        &format!("{base_url}/"),
+        PeerCredentials {
+            username: "admin",
+            password: "admin",
+        },
+    )
+    .await
+    .expect("PC へログインできる");
+
+    let outcome = run_sync(&phone, &peer).await.expect("同期できる");
+
+    assert_eq!(outcome.peer_device_id, 0);
+    assert_eq!(outcome.pulled_applied, 1, "PC の顧客が1件届く");
+    assert_eq!(outcome.conflicts_detected, 0);
+
+    let arrived = CustomersService::new(phone_db)
+        .list(Default::default())
+        .await
+        .expect("list");
+    assert_eq!(arrived.rows.len(), 1);
+    assert_eq!(arrived.rows[0].name, "架空商事");
+
+    server.abort();
+}
+
+/// パスワードが違えば、**200 が返っていても**失敗として扱う。
+///
+/// `/api/auth/login` は資格情報の誤りを 200 + `{success:false}` で返す
+/// （`banto_server::auth` の `login_handler`）。状態コードだけを見ていると
+/// トークン無しで同期へ進み、次の呼び出しが 401 になって理由が分からなくなる。
+#[tokio::test]
+async fn the_sync_client_reports_a_wrong_password_even_though_login_answers_200() {
+    use crate::sync::http_peer::{HttpPeer, PeerCredentials};
+
+    let (router, _token) = router_with_token().await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base_url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+
+    let error = HttpPeer::connect(
+        &base_url,
+        PeerCredentials {
+            username: "admin",
+            password: "まちがい",
+        },
+    )
+    .await
+    .expect_err("違うパスワードでは繋がらない");
+
+    assert!(matches!(error, BantoError::Validation { .. }), "{error:?}");
+    server.abort();
+}

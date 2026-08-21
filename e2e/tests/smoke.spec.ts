@@ -238,6 +238,9 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		// disabled) for non-admin roles.
 		await expect(page.getByRole('link', { name: 'ユーザー管理' })).toHaveCount(0);
 		await expect(page.getByRole('link', { name: '監査ログ' })).toHaveCount(0);
+		// Phase 8: 同期の設定はデバイス番号と接続先を握るので admin 限定
+		// （docs/domain/sync.md 11.9）。
+		await expect(page.getByRole('link', { name: '同期' })).toHaveCount(0);
 
 		await page.goto('/customers');
 		await expect(page.getByRole('link', { name: '新規作成' })).toHaveCount(0);

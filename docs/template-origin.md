@@ -67,7 +67,7 @@ Banto の `crates/*` と `packages/*` は **このリポジトリ内に同梱**�
 | `apps/admin-template/src/routes/panel/[id]/+page.svelte` | `<title>` 接尾辞 | 同上 |
 | `e2e/tests/smoke.spec.ts` / `e2e/visual/visual.spec.ts` / `e2e/visual/a11y.spec.ts` | ログイン見出しアサーション | 同上 |
 | `e2e/playwright.config.ts` | `--filter` 参照 | 同上 |
-| `Cargo.toml` | `workspace.package.repository` | `workspace.package.version`（`1.2.0`）は派生元の値のまま。上流に追随する |
+| `Cargo.toml` | `workspace.package.repository` / `workspace.dependencies` に `reqwest` を追加（Phase 8 同期のクライアント側） | `workspace.package.version`（`1.2.0`）は派生元の値のまま。上流に追随する。`reqwest` は `tauri` が既に引いている版を名指ししただけで、依存グラフにクレートは増えない（`docs/domain/sync.md` 9節） |
 | `.github/workflows/ci.yml` | i18n ジョブの `--filter` 参照（`rename.mjs` が書き換え漏れした箇所） | 名称の行のみ Business 固有 |
 | `README.md` | 冒頭に Business 向けの案内ブロックを追加（本文は Banto の原文のまま） | 追加ブロックより下は上流差分をそのまま適用してよい |
 | `.gitignore` | 末尾に業務データ（`*.sqlite3` / `backups/` / `attachments/`）の除外を追加 | 公開リポジトリのため必須。上流差分適用時に消さない |

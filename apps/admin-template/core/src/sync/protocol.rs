@@ -196,6 +196,21 @@ impl SyncService {
         Self { db, settings }
     }
 
+    /// この端末の DB。
+    ///
+    /// 同期を**実行する**側（[`crate::sync::client`]）は、受け口の3つだけ
+    /// では足りない —— 衝突の保存・自分の outbox の頭・採番レンジの確認で
+    /// 素の `Db` を触る。呼び出し側（`src-tauri`）に `Db` を別途持たせると
+    /// 同じハンドルが2箇所に散るので、ここから貸す。
+    pub fn db(&self) -> &Db {
+        &self.db
+    }
+
+    /// この端末の設定（デバイス番号の置き場）。
+    pub fn settings(&self) -> &SettingsService {
+        &self.settings
+    }
+
     /// 互いの立ち位置を確認する。
     ///
     /// **両端末が同じデバイス番号を名乗ったら拒否する。** これは id レンジが

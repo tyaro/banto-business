@@ -42,6 +42,7 @@ use admin_template_core::profitability::{ProfitabilityService, ProjectProfitabil
 use admin_template_core::projects::{Project, ProjectInput, ProjectsService};
 use admin_template_core::rest::{api_router, audited_credential_verifier, Services};
 use admin_template_core::settings::{AuditSettings, AuthSettings, ServerSettings, SettingsService};
+use admin_template_core::sync::client::SyncOutcome;
 use admin_template_core::sync::protocol::SyncService;
 use admin_template_core::system_info::SystemInfoService;
 use admin_template_core::trips::{Trip, TripGenerationResult, TripInput, TripsService};
@@ -56,7 +57,7 @@ use banto_server::{
 };
 use qrcode::render::svg;
 use qrcode::QrCode;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Mutex;
@@ -91,6 +92,13 @@ struct AppState {
     /// で読みに来る先。この段は読み取りのみで、Tauri コマンドの対は無い
     /// （話しかける向きが常にスマホ → PC の一方向のため）。
     sync: SyncService,
+    /// 同期相手（PC）のパスワード。**アプリの寿命だけメモリに置く**
+    /// （`docs/domain/sync.md` 11.9）。設定にも keyring にも書かない ——
+    /// keyring はそもそも Android ビルドから外してある（8節）。
+    ///
+    /// 保持するのは「帰宅してから何度か同期する」あいだ打ち直さずに済ませる
+    /// ため。アプリを終了すれば消える。
+    sync_password: Mutex<Option<String>>,
     /// The webview window's own session identity, set by `auth_login`/
     /// `auth_setup` and cleared by `auth_logout` - all called directly via
     /// `invoke()`, never through `/api/auth/login`. `Some` means logged in;
@@ -820,6 +828,196 @@ async fn issuer_update(
     )
     .await;
     Ok(settings)
+}
+
+// --- Phase 8: 同期（`docs/domain/sync.md` 11節） ---
+//
+// この3つは **desktop-only**（`scripts/verify-architecture.mjs` の
+// `DESKTOP_ONLY`）。同期は話しかける向きが常にスマホ → PC の一方向で、
+// PC 側の受け口は `/api/sync/*`（`SERVER_ONLY`）。同じ操作が両経路に
+// 並ぶ形にならないので、対の REST ルートを作らない（11.1）。
+
+/// 同期の設定と、いま同期できる状態かどうか。
+///
+/// **パスワードは返さない。** 入力済みかどうか（`hasPassword`）だけを返す。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SyncSettings {
+    device_id: i64,
+    peer_url: String,
+    peer_username: String,
+    /// 今のアプリの寿命の間にパスワードを入力済みか。
+    has_password: bool,
+    /// 採番レンジを持つ表に行が在るか。**在るとデバイス番号を変えられない**
+    /// （`admin_template_core::sync::set_device_id_before_any_rows`）ので、
+    /// 画面はこれを見て入力欄を締める。
+    has_rows: bool,
+    open_conflicts: i64,
+    last_synced_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SyncSettingsInput {
+    device_id: i64,
+    peer_url: String,
+    peer_username: String,
+}
+
+async fn sync_settings_of(state: &AppState) -> Result<SyncSettings, BantoError> {
+    use admin_template_core::sync::{PEER_URL_KEY, PEER_USERNAME_KEY};
+
+    // **ロックを `await` の手前で手放す。** 構造体リテラルの中で `lock()`
+    // すると、そのガードが式全体（＝並んだ `await` の全部）まで生き残り、
+    // future が `Send` でなくなって Tauri コマンドにできない。
+    let has_password = state
+        .sync_password
+        .lock()
+        .expect("sync password lock")
+        .is_some();
+
+    Ok(SyncSettings {
+        device_id: admin_template_core::sync::stored_device_id(&state.settings).await?,
+        peer_url: state.settings.get(PEER_URL_KEY).await?.unwrap_or_default(),
+        peer_username: state
+            .settings
+            .get(PEER_USERNAME_KEY)
+            .await?
+            .unwrap_or_default(),
+        has_password,
+        has_rows: admin_template_core::sync::has_ranged_rows(state.sync.db()).await?,
+        open_conflicts: admin_template_core::sync::conflicts::open_conflict_count(state.sync.db())
+            .await?,
+        last_synced_at: admin_template_core::sync::last_sync_at(state.sync.db()).await?,
+    })
+}
+
+/// 同期の設定の読み取り（admin のみ。`settings_get` と同じ床）。
+#[tauri::command]
+async fn sync_settings_get(state: State<'_, AppState>) -> Result<SyncSettings, BantoError> {
+    require_role(&state, Role::Admin, "sync").await?;
+    sync_settings_of(&state).await
+}
+
+/// 同期の設定の更新。
+///
+/// **デバイス番号は行が在ると変えられない**（`set_device_id_before_any_rows`）。
+/// 変えても既存行の id は変わらないので、後から作る行が相手端末の行と
+/// 同じ id を持つ（`docs/android-build.md` 5.1）。
+///
+/// 監査に残すのはデバイス番号と「アドレスを設定したか」だけ。ユーザー名も
+/// アドレスも監査ログへ写す価値が無く、写せば監査ログ側にも同じ情報が
+/// 増えるだけになる。
+#[tauri::command]
+async fn sync_settings_apply(
+    state: State<'_, AppState>,
+    input: SyncSettingsInput,
+) -> Result<SyncSettings, BantoError> {
+    use admin_template_core::sync::{PEER_URL_KEY, PEER_USERNAME_KEY};
+    let actor = require_role(&state, Role::Admin, "sync").await?;
+
+    admin_template_core::sync::set_device_id_before_any_rows(
+        state.sync.db(),
+        &state.settings,
+        input.device_id,
+    )
+    .await?;
+    let peer_url = input.peer_url.trim();
+    let peer_username = input.peer_username.trim();
+    state.settings.set(PEER_URL_KEY, peer_url).await?;
+    state.settings.set(PEER_USERNAME_KEY, peer_username).await?;
+
+    record_ok(
+        &state.audit,
+        &actor,
+        "settings_change",
+        "sync",
+        None,
+        Some(serde_json::json!({
+            "deviceId": input.device_id,
+            "peerUrlSet": !peer_url.is_empty(),
+        })),
+    )
+    .await;
+    sync_settings_of(&state).await
+}
+
+/// 同期を1回実行する（editor 以上 —— 業務データを書き換える）。
+///
+/// `password` を渡すとメモリに控え、次からは省略できる。控えが無い状態で
+/// 省略されたら、**推測せずに入力を求める**（空パスワードでログインを
+/// 試すと、失敗回数の制限（`banto_server::auth` の RateLimitPolicy）に
+/// 無駄に当たる）。
+///
+/// ログインに失敗したら控えを捨てる。捨てないと、打ち間違えたパスワードを
+/// アプリを再起動するまで使い続けることになる。
+#[tauri::command]
+async fn sync_run(
+    state: State<'_, AppState>,
+    password: Option<String>,
+) -> Result<SyncOutcome, BantoError> {
+    use admin_template_core::sync::http_peer::{HttpPeer, PeerCredentials};
+    use admin_template_core::sync::{PEER_URL_KEY, PEER_USERNAME_KEY};
+
+    let actor = require_role(&state, Role::Editor, "sync").await?;
+
+    if let Some(password) = password {
+        *state.sync_password.lock().expect("sync password lock") = Some(password);
+    }
+    // ロックは `await` を跨がない（複製して即座に解放する）。
+    let password = state
+        .sync_password
+        .lock()
+        .expect("sync password lock")
+        .clone();
+    let Some(password) = password else {
+        return Err(BantoError::Validation {
+            field_errors: vec![banto_core::FieldError {
+                field: "syncPeerPassword".to_string(),
+                message: "PC のパスワードを入力してください".to_string(),
+            }],
+        });
+    };
+
+    let peer_url = state.settings.get(PEER_URL_KEY).await?.unwrap_or_default();
+    let peer_username = state
+        .settings
+        .get(PEER_USERNAME_KEY)
+        .await?
+        .unwrap_or_default();
+
+    let peer = match HttpPeer::connect(
+        &peer_url,
+        PeerCredentials {
+            username: &peer_username,
+            password: &password,
+        },
+    )
+    .await
+    {
+        Ok(peer) => peer,
+        Err(error) => {
+            *state.sync_password.lock().expect("sync password lock") = None;
+            return Err(error);
+        }
+    };
+
+    let outcome = admin_template_core::sync::client::run_sync(&state.sync, &peer).await?;
+
+    record_ok(
+        &state.audit,
+        &actor,
+        "sync",
+        "sync",
+        Some(&outcome.peer_device_id.to_string()),
+        Some(serde_json::json!({
+            "pulledApplied": outcome.pulled_applied,
+            "pushedApplied": outcome.pushed_applied,
+            "conflictsDetected": outcome.conflicts_detected,
+        })),
+    )
+    .await;
+    Ok(outcome)
 }
 
 /// 案件採算（Phase 4）。REST の `GET /api/profitability/{id}`（id は案件 id）と同じ
@@ -2859,6 +3057,7 @@ pub fn run() {
                 issuer,
                 payments,
                 sync,
+                sync_password: Mutex::new(None),
                 auth: Mutex::new(initial_auth),
                 users,
                 settings,
@@ -2918,6 +3117,9 @@ pub fn run() {
             invoices_cancel,
             issuer_get,
             issuer_update,
+            sync_settings_get,
+            sync_settings_apply,
+            sync_run,
             payments_list,
             payments_get,
             payments_create,
@@ -2997,6 +3199,7 @@ mod tests {
             payments: PaymentsService::new(pool.clone()),
             issuer: IssuerService::new(SettingsService::new(pool.clone())),
             sync: SyncService::new(pool.clone(), SettingsService::new(pool.clone())),
+            sync_password: Mutex::new(None),
             auth: Mutex::new(None),
             users: UsersService::new(pool.clone()),
             settings: SettingsService::new(pool.clone()),
@@ -3047,6 +3250,7 @@ mod tests {
             payments: PaymentsService::new(pool.clone()),
             issuer: IssuerService::new(SettingsService::new(pool.clone())),
             sync: SyncService::new(pool.clone(), SettingsService::new(pool.clone())),
+            sync_password: Mutex::new(None),
             auth: Mutex::new(None),
             users: UsersService::new(pool.clone()),
             settings: SettingsService::new(pool.clone()),

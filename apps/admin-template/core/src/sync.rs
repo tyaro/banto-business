@@ -23,11 +23,23 @@ use banto_core::{BantoError, FieldError};
 use banto_storage::Db;
 use serde::{Deserialize, Serialize};
 
+pub mod client;
+pub mod conflicts;
+pub mod http_peer;
 pub mod protocol;
 pub mod rows;
 
 /// デバイス番号を保持する設定キー。
 pub const DEVICE_ID_KEY: &str = "sync.device.id";
+
+/// 同期相手（PC）のアドレス。`http://192.168.1.10:1421` のような値。
+pub const PEER_URL_KEY: &str = "sync.peer.url";
+
+/// 同期相手（PC）へ入るユーザー名。
+///
+/// **パスワードは対になる設定キーを持たない。** 端末に平文で残さず、
+/// アプリの寿命だけメモリに置く（`docs/domain/sync.md` 11.9）。
+pub const PEER_USERNAME_KEY: &str = "sync.peer.username";
 
 /// 1端末あたりの id レンジ幅。
 ///
@@ -146,6 +158,81 @@ pub async fn set_device_id(
         return Err(invalid_device_id(device_id));
     }
     settings.set(DEVICE_ID_KEY, &device_id.to_string()).await
+}
+
+/// どの相手とであれ、最後に同期した日時（一度も無ければ `None`）。
+///
+/// 相手ごとではなく全体の最大を返すのは、画面が出すのが「前回いつ同期
+/// したか」の1つだけだから（相手は PC 1台、`docs/domain/sync.md` 11.1）。
+pub async fn last_sync_at(db: &Db) -> Result<Option<String>, BantoError> {
+    let sql = "SELECT MAX(last_synced_at) FROM sync_state";
+    match db {
+        Db::Sqlite(pool) => {
+            sqlx::query_scalar::<_, Option<String>>(sql)
+                .fetch_one(pool)
+                .await
+        }
+        #[cfg(feature = "postgres")]
+        Db::Postgres(pool) => {
+            sqlx::query_scalar::<_, Option<String>>(sql)
+                .fetch_one(pool)
+                .await
+        }
+    }
+    .map_err(banto_storage::storage_error)
+}
+
+/// 採番レンジを持つテーブルに行が1つでも在るか（墓石も数える）。
+///
+/// 墓石を除外しないのは、**消えた行の id も既に使われている**から。
+/// 「全部消したから振り直してよい」は成立しない —— 相手はその id を
+/// 墓石として持っており、レンジを変えた後に同じ id を別の行へ配ると、
+/// 次の同期でその行が「削除済み」として消される。
+pub async fn has_ranged_rows(db: &Db) -> Result<bool, BantoError> {
+    for table in RANGED_TABLES {
+        let sql = format!("SELECT CAST(COUNT(*) AS BIGINT) FROM {table}");
+        let count = match db {
+            Db::Sqlite(pool) => sqlx::query_scalar::<_, i64>(&sql).fetch_one(pool).await,
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => sqlx::query_scalar::<_, i64>(&sql).fetch_one(pool).await,
+        }
+        .map_err(banto_storage::storage_error)?;
+        if count > 0 {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// デバイス番号を、**行を作る前に限って**保存する。
+///
+/// `set_device_id` は素通しなので、画面からはこちらを呼ぶ。番号を変えても
+/// 既存行の id は変わらないため、行が在る状態で変えると **PC 側の別の行と
+/// 同じ id を持つ行**が後から生まれる（`docs/android-build.md` 5.1）。
+/// 混ざってから気付くと機械的に直せないので、触る前に止める。
+///
+/// 同じ番号を入れ直すのは通す —— 画面の保存が「変更していない項目でも
+/// 落ちる」作りになると、アドレスだけ直したいときに詰まる。
+pub async fn set_device_id_before_any_rows(
+    db: &Db,
+    settings: &crate::settings::SettingsService,
+    device_id: i64,
+) -> Result<(), BantoError> {
+    if !is_valid_device_id(device_id) {
+        return Err(invalid_device_id(device_id));
+    }
+    if device_id != stored_device_id(settings).await? && has_ranged_rows(db).await? {
+        return Err(BantoError::Validation {
+            field_errors: vec![FieldError {
+                field: DEVICE_ID_KEY.to_string(),
+                message: "既にデータが入っているので、デバイス番号は変えられない。\
+                          変えると既存の行の id が相手端末の行と重なる"
+                    .to_string(),
+            }],
+        });
+    }
+    set_device_id(settings, device_id).await?;
+    ensure_id_range(db, device_id).await
 }
 
 /// 墓石に入れる時刻の SQL 式（**両方言とも TEXT に落とす**）。
@@ -1033,6 +1120,78 @@ mod tests {
         }
         assert!(pc_ids.iter().all(|id| owning_device(*id) == 0));
         assert!(pixel_ids.iter().all(|id| owning_device(*id) == 1));
+    }
+
+    /// 行が無ければデバイス番号を設定でき、採番レンジも当たる。
+    #[tokio::test]
+    async fn the_device_number_can_be_set_before_any_rows_exist() {
+        let db = migrate_memory().await.unwrap();
+        let settings = crate::settings::SettingsService::new(db.clone());
+
+        set_device_id_before_any_rows(&db, &settings, 1)
+            .await
+            .expect("行が無ければ設定できる");
+
+        assert_eq!(stored_device_id(&settings).await.unwrap(), 1);
+        let ids = customer_ids(&db, 1).await;
+        assert_eq!(owning_device(ids[0]), 1, "採番レンジも当たっている");
+    }
+
+    /// **行が在ると変えられない。** 変えても既存行の id は動かないので、
+    /// 後から作る行が相手端末の行と同じ id を持つ。
+    #[tokio::test]
+    async fn the_device_number_cannot_change_once_rows_exist() {
+        let db = migrate_memory().await.unwrap();
+        let settings = crate::settings::SettingsService::new(db.clone());
+        customer_ids(&db, 1).await;
+
+        let error = set_device_id_before_any_rows(&db, &settings, 1)
+            .await
+            .expect_err("行が在るので拒否する");
+
+        assert!(matches!(error, BantoError::Validation { .. }), "{error:?}");
+        assert_eq!(
+            stored_device_id(&settings).await.unwrap(),
+            DEFAULT_DEVICE_ID,
+            "拒否したのに書き換わっている"
+        );
+    }
+
+    /// 同じ番号を入れ直すのは、行が在っても通す。**アドレスだけ直したい
+    /// ときに詰まらせない**（画面は3項目をまとめて保存する）。
+    #[tokio::test]
+    async fn resaving_the_same_device_number_is_allowed_even_with_rows() {
+        let db = migrate_memory().await.unwrap();
+        let settings = crate::settings::SettingsService::new(db.clone());
+        set_device_id_before_any_rows(&db, &settings, 1)
+            .await
+            .expect("初回");
+        customer_ids(&db, 1).await;
+
+        set_device_id_before_any_rows(&db, &settings, 1)
+            .await
+            .expect("同じ番号なら通る");
+    }
+
+    /// 墓石だけが残っている状態でも「行が在る」と数える。
+    ///
+    /// 消えた行の id も既に使われている —— 相手はそれを墓石として持って
+    /// いるので、レンジを変えて同じ id を別の行へ配ると、次の同期でその行が
+    /// 削除済みとして消される。
+    #[tokio::test]
+    async fn tombstones_still_count_as_existing_rows() {
+        let db = migrate_memory().await.unwrap();
+        let settings = crate::settings::SettingsService::new(db.clone());
+        let ids = customer_ids(&db, 1).await;
+        crate::customers::CustomersService::new(db.clone())
+            .delete(ids[0])
+            .await
+            .expect("論理削除");
+
+        assert!(has_ranged_rows(&db).await.unwrap(), "墓石を数えていない");
+        set_device_id_before_any_rows(&db, &settings, 1)
+            .await
+            .expect_err("墓石が在るので拒否する");
     }
 
     /// レンジ分けの対象は整数 PK の5テーブルのみ。コード PK の3テーブルは

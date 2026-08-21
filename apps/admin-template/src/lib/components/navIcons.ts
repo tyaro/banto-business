@@ -20,6 +20,7 @@ import {
 	ListTree,
 	Users,
 	ScrollText,
+	RefreshCw,
 	Settings
 } from '@lucide/svelte';
 import type { NavIconKey } from '$lib/navigation';
@@ -39,5 +40,6 @@ export const NAV_ICONS: Record<NavIconKey, Component> = {
 	tree: ListTree,
 	users: Users,
 	'audit-log': ScrollText,
+	sync: RefreshCw,
 	settings: Settings
 };
