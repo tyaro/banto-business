@@ -67,7 +67,26 @@ cargo tree -p admin-template --target aarch64-linux-android   -i keyring  # 出�
 `cfg(target_os = "windows")` の target テーブルにあり、`vibrancy_*` コマンドは
 それ以外で「非対応」に degrade する。Android 向けに触るところは無い。
 
-### 2.3 起動時に採番レンジを当てるようにした
+### 2.3 `run()` にモバイル用のエントリポイントを付けた
+
+デスクトップは `main.rs` の `fn main()` が `run()` を呼ぶ。Android は
+`NativeActivity` が**共有ライブラリのシンボルを直接呼ぶ**ので `main` を
+通らない。`#[cfg_attr(mobile, tauri::mobile_entry_point)]` がそのシンボルを
+生やす。
+
+**付け忘れの出方が悪い。** `cargo build` は通り `.so` も出るのに、APK の
+組み立て段で落ちる。
+
+```
+failed to validate library: ... does not include required runtime symbols.
+This means you are likely missing the tauri::mobile_entry_point macro usage
+```
+
+Rust 側は何も間違っていないので原因が見えにくい。**CI で APK を組むように
+して初めて見つかった** —— `cargo check --target aarch64-linux-android` まで
+では出ない（リンクではなく組み立て時の検証で落ちるため）。
+
+### 2.4 起動時に採番レンジを当てるようにした
 
 **これが無いと Android ビルドは通っても使えない。**
 
