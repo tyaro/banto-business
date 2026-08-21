@@ -2485,6 +2485,23 @@ async fn panel_open(app: tauri::AppHandle, id: String, title: String) -> Result<
     Ok(())
 }
 
+/// アプリの入口。
+///
+/// ## モバイルでは `main.rs` を通らない（Phase 8）
+///
+/// デスクトップは `main.rs` の `fn main()` がここを呼ぶ。Android は
+/// `NativeActivity` が **共有ライブラリのシンボルを直接呼ぶ**ので、
+/// `main` は実行されない。`tauri::mobile_entry_point` がそのシンボルを
+/// 生やす。
+///
+/// 付け忘れると **`cargo build` は通り、`.so` も出るのに、APK の組み立てで
+/// 「required runtime symbols が無い」と落ちる**。Rust 側は何も間違って
+/// いないので原因が見えにくい。`.github/workflows/android-build.yml` が
+/// この失敗を捕まえる（実際にこれで見つかった）。
+///
+/// `cfg_attr(mobile, ...)` なのでデスクトップのビルドは何も変わらない
+/// （`mobile` cfg は `tauri_build::build()` が立てる）。
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {

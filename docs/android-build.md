@@ -3,14 +3,20 @@
 Pixel 10 Fold に入れて使うための手順。**ストアを経由せず、自分の端末へ
 APK を直接入れる**（`docs/domain/sync.md` 8節）。
 
-> **どこまで確かめてあるか。** このリポジトリの CI と開発コンテナには
-> Android SDK / NDK / Rust の Android ターゲットが無い（8節の決定：
-> 「Android ビルドを CI に足さない」）。
+> **APK は CI で作れる。** `.github/workflows/android-build.yml` を
+> 手動起動（Actions タブ → Android build → Run workflow）すると、
+> デバッグ署名の APK が成果物として出る。手元に Android SDK / NDK を
+> 用意しなくてよいので、**3〜4章を自分でやる必要は無い**。
+>
+> 以下は「手元でビルドしたい場合」と「CI が壊れたときに何を見るか」の
+> ための手順。開発コンテナには Android SDK / NDK / Rust の Android
+> ターゲットが無いため、章ごとに検証状況が違う。
 >
 > | 章 | 状態 |
 > | --- | --- |
 > | 2. アプリ側の対応 | **検証済**（依存グラフ・単体テスト） |
-> | 3〜5. 実機ビルドと端末設定 | **未検証**（手順のみ） |
+> | 3〜4. 実機ビルド | **CI で検証**（7章） |
+> | 5. 端末設定 | **未検証**（手順のみ） |
 > | 6. PC 2台での予行 | **検証済**（実際に走らせた） |
 >
 > 実機で最初に通したときに、詰まった箇所をこのファイルへ追記すること。
@@ -61,7 +67,26 @@ cargo tree -p admin-template --target aarch64-linux-android   -i keyring  # 出�
 `cfg(target_os = "windows")` の target テーブルにあり、`vibrancy_*` コマンドは
 それ以外で「非対応」に degrade する。Android 向けに触るところは無い。
 
-### 2.3 起動時に採番レンジを当てるようにした
+### 2.3 `run()` にモバイル用のエントリポイントを付けた
+
+デスクトップは `main.rs` の `fn main()` が `run()` を呼ぶ。Android は
+`NativeActivity` が**共有ライブラリのシンボルを直接呼ぶ**ので `main` を
+通らない。`#[cfg_attr(mobile, tauri::mobile_entry_point)]` がそのシンボルを
+生やす。
+
+**付け忘れの出方が悪い。** `cargo build` は通り `.so` も出るのに、APK の
+組み立て段で落ちる。
+
+```
+failed to validate library: ... does not include required runtime symbols.
+This means you are likely missing the tauri::mobile_entry_point macro usage
+```
+
+Rust 側は何も間違っていないので原因が見えにくい。**CI で APK を組むように
+して初めて見つかった** —— `cargo check --target aarch64-linux-android` まで
+では出ない（リンクではなく組み立て時の検証で落ちるため）。
+
+### 2.4 起動時に採番レンジを当てるようにした
 
 **これが無いと Android ビルドは通っても使えない。**
 
@@ -201,3 +226,57 @@ banto-serve: sync device 1 (ids 1000000000..=1999999999)
 $ curl ... -X POST http://127.0.0.1:8722/api/customers -d '{"code":"P001",...}'
 {"id": 1000000000, "code": "P001", ...}
 ```
+
+---
+
+## 7. CI でビルドする
+
+`.github/workflows/android-build.yml`。
+
+| 起動 | いつ |
+| --- | --- |
+| 手動（`workflow_dispatch`） | 手元に APK が欲しいとき |
+| 月次（`schedule`） | 環境ドリフトで壊れたことに、APK が欲しくなった当日ではなく事前に気付くため |
+| `pull_request` | **このワークフロー自身**を変更した PR だけ |
+
+3つ目は、他に誰も踏まない経路だから。直した内容が正しいかを確かめる手段が
+これしか無い。
+
+### 7.1 なぜ「CI に足さない」から変えたか
+
+`docs/domain/sync.md` 8節では「SDK / NDK / JDK が要り重い」として足さない
+判断をしていたが、**前提の方が間違っていた**。GitHub ホストの ubuntu
+ランナーにはこの3つが最初から入っており、こちらで用意するのは Rust の
+Android ターゲットだけ。
+
+「重い」の残り半分（Rust の cross-compile と Gradle でビルド時間が伸びる）は
+本当なので、**毎 PR では回さない**。
+
+### 7.2 署名しない
+
+出るのは**デバッグ署名の APK**。ストアを経由せず自分の端末へ直接入れる前提
+（8節）なので、リリース署名の鍵を CI に置く理由が無い。**secrets を1つも
+使わない**ので、`CLAUDE.md` 第8章の「fork からの PR では渡らない前提で
+設計する」も自明に満たす。
+
+Android は未署名の APK を入れられないが、デバッグ署名で足りる。同じ鍵で
+署名し続ける限り上書き更新もできる（鍵が変わると一度アンインストールが
+要る）。
+
+### 7.3 端末への入れ方
+
+Actions の run ページから `banto-business-debug-apk` を落とし、端末へ
+転送して開く。「提供元不明のアプリ」の許可が要る。
+
+`adb` があるなら PC から直接入れられる。
+
+```sh
+adb install -r banto-business.apk
+```
+
+### 7.4 `gen/android` は毎回作り直している
+
+`tauri android init` の生成物で `.gitignore` 済みなので、CI では毎回
+生成している。**`AndroidManifest.xml` に手を入れる段（4.1）になったら
+方針を決めること** —— 「コミットする」か「ワークフローでパッチを当てる」の
+どちらか。今のまま手で直しても次の run で消える。
