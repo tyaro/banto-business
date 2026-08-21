@@ -36,7 +36,10 @@ const VIEWER_DISPLAY_NAME = 'E2E閲覧者';
 // name doubling as the grid-filter needle makes it worth being paranoid)
 // can never collide with the row this run creates.
 const CUSTOMER_CODE = `E2E-${Date.now()}`;
-const CUSTOMER_NAME = '架空商事';
+// **絞り込みの目印は名前側に持たせる。** 顧客コードは自動採番の内部番号に
+// なったので一覧の列から外した（決定 C-9 改訂）。コード自体は入力できる
+// ままなので `CUSTOMER_CODE` は作成時にそのまま渡す。
+const CUSTOMER_NAME = `架空商事-${Date.now()}`;
 const CUSTOMER_NAME_UPDATED = '架空商事（改称後）';
 
 // 領収書の添付シナリオ（要件 F-E3）。経費は案件に、案件は顧客にぶら下がるので
@@ -44,6 +47,7 @@ const CUSTOMER_NAME_UPDATED = '架空商事（改称後）';
 // 顧客コードは20文字以内（`customers.rs` の `MAX_CODE_LEN`）。接頭辞を伸ばすと
 // タイムスタンプと合わせて超える。
 const ATTACHMENT_CUSTOMER_CODE = `E2E-A${Date.now()}`;
+const ATTACHMENT_CUSTOMER_NAME = `E2E添付テスト顧客-${Date.now()}`;
 const ATTACHMENT_PROJECT_NAME = `E2E添付テスト案件-${Date.now()}`;
 const ATTACHMENT_EXPENSE_PAYEE = `E2E添付テスト支払先-${Date.now()}`;
 const PNG_FILE_NAME = 'attachment-test.png';
@@ -179,10 +183,10 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 
 		// サーバーモードのグリッド。行を探して回るのではなく、実行ごとに
 		// 一意なコードで絞り込む。
-		await applyColumnFilter(page, '顧客コード', CUSTOMER_CODE);
-		await expect(rowWithText(page, CUSTOMER_CODE)).toBeVisible();
+		await applyColumnFilter(page, '顧客名', CUSTOMER_NAME);
+		await expect(rowWithText(page, CUSTOMER_NAME)).toBeVisible();
 
-		const id = await openRowAndGetId(page, CUSTOMER_CODE, 'customers');
+		const id = await openRowAndGetId(page, CUSTOMER_NAME, 'customers');
 		const detailPath = `/customers/${id}`;
 
 		// 編集: 顧客名を変えて保存し、グリッド経由ではなく URL で開き直して
@@ -265,12 +269,12 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 	test('7. 経費の詳細: 領収書のアップロード・サムネイル・行・削除', async () => {
 		// 経費は案件に、案件は顧客にぶら下がる（要件 F-E3）。まず1本作る。
 		await page.goto('/customers/new');
-		await fillCustomerForm(page, ATTACHMENT_CUSTOMER_CODE, CUSTOMER_NAME);
+		await fillCustomerForm(page, ATTACHMENT_CUSTOMER_CODE, ATTACHMENT_CUSTOMER_NAME);
 		await page.getByRole('button', { name: '保存' }).click();
 		await expect(page).toHaveURL(/\/customers$/);
 
-		await applyColumnFilter(page, '顧客コード', ATTACHMENT_CUSTOMER_CODE);
-		const customerId = await openRowAndGetId(page, ATTACHMENT_CUSTOMER_CODE, 'customers');
+		await applyColumnFilter(page, '顧客名', ATTACHMENT_CUSTOMER_NAME);
+		const customerId = await openRowAndGetId(page, ATTACHMENT_CUSTOMER_NAME, 'customers');
 
 		await page.goto('/projects/new');
 		// 顧客・案件は選択式（内部 id を手で打たせない、`referenceOptions`）。

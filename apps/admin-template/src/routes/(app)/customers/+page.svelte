@@ -52,10 +52,13 @@
 			width: 80,
 			editable: false
 		},
-		{ id: 'id', header: 'ID', accessor: (row) => row.id, width: 72, editable: false },
+		// 顧客コードは自動採番の内部番号（決定 C-9 改訂）。取引先とのやり取りに
+		// 出るものではないので一覧からは外す。詳細画面では引き続き見えるし、
+		// 会計ソフトに合わせて自分で付けることもできる。
+		// **列の表示切替が Banto 側に入ったら、除外ではなく既定で非表示へ**
+		// 変えること（docs/banto-feedback.md）。
 		...columnsFromSchema<CustomerRow>(customersSchema, {
 			overrides: {
-				code: { width: 120 },
 				name: { width: 240 },
 				closingDay: { width: 110, format: dayFormat },
 				paymentDay: { width: 110, format: dayFormat },
@@ -63,7 +66,7 @@
 				updatedAt: { width: 130 }
 			},
 			messages: columnValidationMessages()
-		})
+		}).filter((column) => column.id !== 'code')
 	];
 
 	// spec M10 RBAC: viewer はインライン編集不可。

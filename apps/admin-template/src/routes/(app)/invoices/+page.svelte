@@ -57,7 +57,6 @@
 	// がフォームスキーマを持たないため（上の doc コメント参照）。
 	const baseColumns: GridColumn<InvoiceRow>[] = [
 		{ id: 'open', header: m['resource.colActions'](), accessor: () => '', width: 80 },
-		{ id: 'id', header: 'ID', accessor: (row) => row.id, width: 72 },
 		{
 			id: 'invoiceNumber',
 			header: m['invoices.fieldInvoiceNumber'](),

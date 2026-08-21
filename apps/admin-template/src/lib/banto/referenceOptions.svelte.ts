@@ -89,6 +89,23 @@ export function projectOptions(): FieldOption[] {
 	return projects;
 }
 
+/**
+ * 案件 id → 見出し。一覧の `案件` 列を数字ではなく名前で描くために使う。
+ *
+ * `columnsFromSchema` も select 列を選択肢のラベルで描く仕組みを持っているが、
+ * **選択肢を組み立てる時点（＝画面の生成時）に確定した値**を使う。選択肢は
+ * 後から非同期に届くので、そちらには載らない。この関数は**セルを描くたび**に
+ * 呼ばれる `format` から読むので、届いた時点で表示が入れ替わる。
+ *
+ * 見つからないときは数字のまま返す —— 消してしまうと、選択肢の読み込みに
+ * 失敗したときに「案件が空欄の行」に見えてしまう。
+ */
+export function projectLabel(value: unknown): string {
+	const id = Number(value);
+	const found = projects.find((option) => option.value === id);
+	return found ? found.label : String(value ?? '');
+}
+
 /** 顧客の選択肢（同上）。 */
 export function customerOptions(): FieldOption[] {
 	return customers;

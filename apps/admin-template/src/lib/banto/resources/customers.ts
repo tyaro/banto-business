@@ -36,23 +36,6 @@ const integerValidate = (value: unknown): string | null =>
 export const customersSchema: FormSchema = {
 	fields: [
 		{
-			name: 'code',
-			get label() {
-				return m['customers.fieldCode']();
-			},
-			type: 'text',
-			// 必須にしない: 空欄で保存すると Rust 側が C001 を採番する。
-			// 案件番号（要件 F-M3）と同じ扱いに揃えた —— 個人事業では顧客
-			// コードを自分で決める意味が薄く、毎回考えるのは手間でしかない。
-			// 会計ソフト側の得意先コードに合わせたい場合のために入力もできる。
-			max: 20,
-			// FieldDef に hint は無いので、自動採番の説明は placeholder で出す
-			// （案件の code 欄と同じ理由）。
-			get placeholder() {
-				return m['customers.codeAutoHint']();
-			}
-		},
-		{
 			name: 'name',
 			get label() {
 				return m['customers.fieldName']();
@@ -146,6 +129,26 @@ export const customersSchema: FormSchema = {
 			},
 			type: 'date',
 			readonly: true
+		},
+		{
+			// **入力欄の末尾に置く。** 自動採番されるので普段は触らない欄で、
+			// 先頭にあると「まず何か入れる欄」に見えてしまう（スマホでは特に）。
+			// 会計ソフト側のコードに合わせたいときだけ使う。
+			name: 'code',
+			get label() {
+				return m['customers.fieldCode']();
+			},
+			type: 'text',
+			// 必須にしない: 空欄で保存すると Rust 側が C001 を採番する。
+			// 案件番号（要件 F-M3）と同じ扱いに揃えた —— 個人事業では顧客
+			// コードを自分で決める意味が薄く、毎回考えるのは手間でしかない。
+			// 会計ソフト側の得意先コードに合わせたい場合のために入力もできる。
+			max: 20,
+			// FieldDef に hint は無いので、自動採番の説明は placeholder で出す
+			// （案件の code 欄と同じ理由）。
+			get placeholder() {
+				return m['customers.codeAutoHint']();
+			}
 		}
 	]
 };

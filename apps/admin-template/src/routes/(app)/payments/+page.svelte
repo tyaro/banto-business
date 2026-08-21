@@ -41,7 +41,6 @@
 	// 一覧はインライン編集を持たないので、`editable: false` を最後に一括で付ける。
 	const baseColumns: GridColumn<PaymentRow>[] = [
 		{ id: 'open', header: m['resource.colActions'](), accessor: () => '', width: 80 },
-		{ id: 'id', header: 'ID', accessor: (row) => row.id, width: 72 },
 		{
 			id: 'paidOn',
 			header: m['payments.fieldPaidOn'](),

@@ -23,6 +23,7 @@
 	import { Plus } from '@lucide/svelte';
 	import * as m from '$lib/paraglide/messages';
 	import { gridMessages, columnValidationMessages } from '$lib/banto/i18n';
+	import { loadProjectOptions, projectLabel } from '$lib/banto/referenceOptions.svelte';
 	import { tripsSchema } from '$lib/banto/resources/trips';
 	import { sessionStore } from '$lib/session.svelte';
 	import { canWriteResources } from '$lib/permissions';
@@ -49,10 +50,11 @@
 			width: 80,
 			editable: false
 		},
-		{ id: 'id', header: 'ID', accessor: (row) => row.id, width: 72, editable: false },
 		...columnsFromSchema<TripRow>(tripsSchema, {
 			overrides: {
-				projectId: { width: 90 },
+				// 案件は名前で見せる（内部 id を読ませない）。`format` はセルを
+				// 描くたびに呼ばれるので、非同期に届いた選択肢も反映される。
+				projectId: { width: 220, format: projectLabel },
 				destination: { width: 240 },
 				startOn: { width: 120 },
 				endOn: { width: 120 },
@@ -84,6 +86,11 @@
 	// `ItemsServerGrid.svelte` と同じく、読み込みと後片付けを **別々の**
 	// effect にする（1つにまとめると `windowed.params` に依存してしまい、
 	// sort/filter のたびに cleanup が走って invalidate 購読が切れる）。
+	// 案件名を列に出すための選択肢（`referenceOptions`）。
+	$effect(() => {
+		void loadProjectOptions();
+	});
+
 	$effect(() => {
 		void windowed.ensureRange(0, 100);
 	});
