@@ -312,7 +312,7 @@ PC    : 同期前の古い X を含めて請求書を確定 → X.invoiced = 1
   おり、用意するのは Rust の Android ターゲットだけ。ただし Rust の
   cross-compile と Gradle でビルド時間は伸びるので、**毎 PR では回さず**
   手動起動と月次に限る（`.github/workflows/android-build.yml`）。出るのは
-  デバッグ署名の APK で、secrets を使わない
+  デバッグ署名の APK で、secrets を使わない。**実測 6分33秒**（約 62 MB）
 
 ### 8.1 折りたたみ端末の画面
 
