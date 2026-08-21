@@ -273,7 +273,10 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		const customerId = await openRowAndGetId(page, ATTACHMENT_CUSTOMER_CODE, 'customers');
 
 		await page.goto('/projects/new');
-		await page.getByLabel('顧客').fill(String(customerId));
+		// 顧客・案件は選択式（内部 id を手で打たせない、`referenceOptions`）。
+		// `selectOption` は選択肢が現れるまで待つので、非同期に読み込まれる
+		// 選択肢を待つ処理を別に書く必要は無い。`<option value>` は id。
+		await page.getByLabel('顧客').selectOption(String(customerId));
 		await page.getByLabel('案件名').fill(ATTACHMENT_PROJECT_NAME);
 		// 状態は必須の select（既定値なし）。
 		await page.getByLabel('状態').selectOption({ label: '受注' });
@@ -284,7 +287,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		const projectId = await openRowAndGetId(page, ATTACHMENT_PROJECT_NAME, 'projects');
 
 		await page.goto('/expenses/new');
-		await page.getByLabel('案件').fill(String(projectId));
+		await page.getByLabel('案件').selectOption(String(projectId));
 		await page.getByLabel('支出日').fill('2026-08-20');
 		await page.getByLabel('分類').fill('TRANSPORT');
 		await page.getByLabel('支払先').fill(ATTACHMENT_EXPENSE_PAYEE);
