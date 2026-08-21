@@ -24,6 +24,7 @@ export type NavIconKey =
 	| 'tree'
 	| 'users'
 	| 'audit-log'
+	| 'sync'
 	| 'settings';
 
 /** Paraglide message key for a nav entry's visible label (i18n layer ②,
@@ -44,6 +45,7 @@ export type NavLabelKey =
 	| 'nav.tree'
 	| 'nav.users'
 	| 'nav.auditLog'
+	| 'nav.sync'
 	| 'nav.settings';
 
 export interface NavItem {
@@ -77,6 +79,9 @@ export const navItems: NavItem[] = [
 	{ path: '/tree', labelKey: 'nav.tree', icon: 'tree' },
 	{ path: '/users', labelKey: 'nav.users', icon: 'users', adminOnly: true },
 	{ path: '/audit-log', labelKey: 'nav.auditLog', icon: 'audit-log', adminOnly: true },
+	// Phase 8（デバイス間同期）。設定の一種で admin 限定。設定の直前に置く
+	// のは、デバイス番号とPCのアドレスがアプリ全体の設定だから。
+	{ path: '/sync', labelKey: 'nav.sync', icon: 'sync', adminOnly: true },
 	{ path: '/settings', labelKey: 'nav.settings', icon: 'settings' }
 ];
 

@@ -68,7 +68,7 @@ async fn reset_schema(url: &str) {
          invoice_lines, invoices, expenses, work_logs, trips, cost_rates, work_categories, \
          expense_categories, projects, customers CASCADE",
         // Phase 8（同期の土台）。
-        "DROP TABLE IF EXISTS sync_outbox, sync_state CASCADE",
+        "DROP TABLE IF EXISTS sync_outbox, sync_state, sync_conflicts CASCADE",
         // トリガ関数は表の DROP では消えない（CASCADE はトリガまで）。
         "DROP FUNCTION IF EXISTS sync_record_change() CASCADE",
         "DROP TABLE IF EXISTS _sqlx_migrations",
@@ -1001,5 +1001,119 @@ async fn sync_push_applies_and_detects_conflicts_on_postgres() {
             .expect("read")
             .expect("row"),
         edited
+    );
+}
+
+/// 同期を**実行する側**の SQL が PostgreSQL でも動くこと
+/// （`docs/domain/sync.md` 11節）。方言で分岐しているのは
+///
+/// - `sync_conflicts` の保存と読み出し（`CAST(COUNT(*) AS BIGINT)` /
+///   `now_text_expr` が TEXT を返すこと。`Dialect::now_expr` の timestamptz は
+///   TEXT 列へ入らない）
+/// - `has_ranged_rows` の `CAST(COUNT(*) AS BIGINT)`（PostgreSQL の
+///   `count()` は numeric を返すので `i64` で受けられない）
+/// - `last_sync_at` の `MAX(last_synced_at)`（1行も無いとき NULL を返す）
+///
+/// の3つ。SQLite のテストは通っても、この3つは実サーバでしか確かめられない。
+#[tokio::test]
+async fn the_sync_client_side_queries_work_on_postgres() {
+    let Ok(url) = std::env::var("BANTO_TEST_PG_URL") else {
+        return;
+    };
+    let _guard = PG_SMOKE_LOCK.lock().await;
+    reset_schema(&url).await;
+    let db = init_db_from_target(&url)
+        .await
+        .expect("init_db_from_target");
+    let settings = SettingsService::new(db.clone());
+
+    // --- 行が無いうちは番号を変えられる ---
+    assert!(
+        !admin_template_core::sync::has_ranged_rows(&db)
+            .await
+            .expect("has_ranged_rows"),
+        "まっさらな DB で行が在ると判定されている"
+    );
+    assert_eq!(
+        admin_template_core::sync::last_sync_at(&db)
+            .await
+            .expect("last_sync_at"),
+        None,
+        "一度も同期していないのに日時が返っている"
+    );
+    admin_template_core::sync::set_device_id_before_any_rows(&db, &settings, 1)
+        .await
+        .expect("行が無ければ設定できる");
+
+    // --- 行を作ると締まる ---
+    let customer = CustomersService::new(db.clone())
+        .create(range_customer("C001", "架空商事"))
+        .await
+        .expect("customer");
+    assert!(
+        admin_template_core::sync::has_ranged_rows(&db)
+            .await
+            .expect("has_ranged_rows"),
+        "行を作ったのに在ると判定されない"
+    );
+    admin_template_core::sync::set_device_id_before_any_rows(&db, &settings, 0)
+        .await
+        .expect_err("行が在るので番号を変えられない");
+
+    // --- 衝突の保存 → 読み出し → 差し替え ---
+    let spec = table_spec("customers").expect("spec");
+    let local = read_row(&db, spec, &customer.id.to_string())
+        .await
+        .expect("read")
+        .expect("row");
+    let mut incoming = local.clone();
+    incoming.values.insert(
+        "name".to_string(),
+        SyncValue::Text("PC 側で改称".to_string()),
+    );
+    let conflict = admin_template_core::sync::protocol::Conflict {
+        table: "customers".to_string(),
+        key: customer.id.to_string(),
+        reason: ConflictReason::BothChanged,
+        local: local.clone(),
+        incoming: incoming.clone(),
+    };
+
+    admin_template_core::sync::conflicts::record_conflicts(&db, 0, std::slice::from_ref(&conflict))
+        .await
+        .expect("record");
+    assert_eq!(
+        admin_template_core::sync::conflicts::open_conflict_count(&db)
+            .await
+            .expect("count"),
+        1
+    );
+
+    // 同じ行が再び揉めても未解決は1件のまま（差し替える）。
+    admin_template_core::sync::conflicts::record_conflicts(&db, 0, std::slice::from_ref(&conflict))
+        .await
+        .expect("record again");
+    let stored = admin_template_core::sync::conflicts::open_conflicts(&db)
+        .await
+        .expect("open_conflicts");
+    assert_eq!(stored.len(), 1, "未解決が積み上がっている: {stored:?}");
+    assert_eq!(stored[0].reason, ConflictReason::BothChanged);
+    assert_eq!(stored[0].local, local, "JSON の往復で行が変わっている");
+    assert_eq!(stored[0].incoming, incoming);
+    assert!(
+        !stored[0].detected_at.is_empty(),
+        "検出日時が TEXT として入っていない"
+    );
+
+    // --- 進捗を刻めば最終同期日時が返る ---
+    admin_template_core::sync::record_peer_progress(&db, 0, 3, 0)
+        .await
+        .expect("progress");
+    assert!(
+        admin_template_core::sync::last_sync_at(&db)
+            .await
+            .expect("last_sync_at")
+            .is_some(),
+        "進捗を刻んだのに最終同期日時が返らない"
     );
 }

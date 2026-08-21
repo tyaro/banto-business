@@ -344,7 +344,15 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 		'auth_config_apply',
 		'panel_open',
 		'backups_open_folder',
-		'attachments_open_folder'
+		'attachments_open_folder',
+		// Phase 8 同期の**実行する側**（`docs/domain/sync.md` 11.1）。
+		// 受け口は下の SERVER_ONLY（`/api/sync/*`）で、話しかける向きは
+		// 常にスマホ → PC の一方向。同じ操作が両経路に並ぶ形にならないので
+		// 対の REST ルートを作らない。パスワードをメモリにだけ置く都合上、
+		// `sync_run` はアプリのプロセスの中でしか成立しない。
+		'sync_settings_get',
+		'sync_settings_apply',
+		'sync_run'
 	]);
 
 	// 読み取り系（list/get/status。§1 により両経路とも監査せず、対称強制の対象外）。

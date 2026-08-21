@@ -57,6 +57,13 @@ tempfile = "3"
 # `banto-attachments` calls it explicitly rather than relying on whatever
 # version its transitive dependents happen to pull in.
 sha2 = "0.11"
+# Phase 8 同期のクライアント側（`apps/admin-template/core/src/sync/http_peer.rs`）。
+# **依存グラフに新しいクレートは増えない** —— `tauri` が既に同じ版を、TLS 機能
+# なし（hyper のみ）で引いている。`default-features = false` のまま名指しする
+# ので、`ADR-0002`（最小依存）と `docs/domain/sync.md` 9節（新規依存を足さない）
+# の意図 —— ビルドを重くしない・TLS スタックを持ち込まない —— に沿う。
+# LAN 内は平文で話す（`ADR-0003`：TLS はリバースプロキシ終端）。
+reqwest = { version = "0.13", default-features = false, features = ["json"] }
 banto-core = { path = "crates/banto-core" }
 banto-storage = { path = "crates/banto-storage" }
 banto-server = { path = "crates/banto-server" }
