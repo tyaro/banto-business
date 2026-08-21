@@ -1,0 +1,128 @@
+# Android デバッグ APK のビルド（Phase 8 ステップ5、docs/android-build.md）。
+#
+# ## なぜ「CI に足さない」から方針を変えたか
+#
+# `docs/domain/sync.md` 8節では「Android ビルドを CI に足さない（SDK / NDK /
+# JDK が要り重い）」と決めていた。そのうち **前提の方が間違っていた** ——
+# GitHub ホストの ubuntu ランナーには Android SDK / NDK / JDK が最初から
+# 入っており、こちらで用意するものは Rust の Android ターゲットだけ。
+#
+# ただし「重い」の残り半分（Rust の cross-compile と Gradle でビルド時間が
+# 伸びる）は本当なので、**毎 PR では回さない**:
+#
+# - `workflow_dispatch` … 手元に APK が欲しいときに回す
+# - `schedule`（月次） … 環境ドリフト（NDK / ランナーイメージ / tauri の
+#   更新）で壊れたことに、次に APK が欲しくなった当日ではなく事前に気付く
+# - `pull_request`（このファイルを変更した PR だけ） … **このワークフロー
+#   自身の変更を、そのPRで実際に走らせて確かめる**。他に誰も踏まない経路
+#   なので、直した内容が正しいかを確かめる手段がこれしか無い
+#
+# ## 署名しない（＝ secrets を使わない）
+#
+# 出るのは **デバッグ署名の APK**。ストアを経由せず自分の端末へ直接入れる
+# 前提（8節）なので、リリース署名の鍵を CI に置く理由が無い。secrets を
+# 使わないので `CLAUDE.md` 第8章の「fork からの PR では渡らない前提で
+# 設計する」も自明に満たす。
+#
+# サードパーティ Action はコミット SHA でピン留めする（ci.yml 冒頭の方針。
+# dtolnay/rust-toolchain@stable の例外理由もそちらを参照）。
+name: Android build
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 毎月1日 19:00 UTC = 2日 04:00 JST。日と曜日を両方絞ると cron は
+    # OR で解釈する（＝月に11回走る）ので、日だけを指定する。
+    - cron: '0 19 1 * *'
+  pull_request:
+    paths:
+      - '.github/workflows/android-build.yml'
+
+concurrency:
+  group: android-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    name: Debug APK (aarch64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # Pixel 10 Fold は arm64。エミュレータを使わないので他の ABI は
+          # 足さない（1 ABI 分だけ Rust をビルドすれば済む）。
+          targets: aarch64-linux-android
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: '. -> target'
+
+      # tauri の Android コマンドは `NDK_HOME` を見る。ランナーが用意して
+      # いる変数名は `ANDROID_NDK_ROOT` なので橋渡しする。何が入っている
+      # かをログに残すのは、壊れたときに「ランナーイメージが変わったのか
+      # こちらの不具合か」を切り分けるため。
+      - name: Locate the Android SDK / NDK / JDK
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          echo "ANDROID_NDK_ROOT=$ANDROID_NDK_ROOT"
+          ls "$ANDROID_HOME/ndk" || true
+          test -n "$ANDROID_NDK_ROOT" || {
+            echo "ANDROID_NDK_ROOT が空。ランナーイメージの構成が変わった可能性がある" >&2
+            exit 1
+          }
+          echo "NDK_HOME=$ANDROID_NDK_ROOT" >> "$GITHUB_ENV"
+          # JDK はランナーが同梱している（Android Gradle Plugin 8.x は 17 以上）。
+          # `actions/setup-java` を足さないのは、依存を1つ増やすだけの価値が
+          # 無いため。17 が明示的に在ればそれを使い、無ければ既定に任せる。
+          java -version 2>&1
+          if [ -n "$JAVA_HOME_17_X64" ]; then
+            echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
+          fi
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # `tauri android init` が生成する `gen/android` は .gitignore 済み
+      # （生成物）。毎回作り直すので、AndroidManifest.xml へ手を入れる段に
+      # なったら「コミットする」か「ここでパッチを当てる」かを決めること
+      # （docs/android-build.md 4.1）。
+      - name: Initialise the Android project
+        working-directory: apps/admin-template
+        run: pnpm tauri android init
+
+      - name: Build the debug APK
+        working-directory: apps/admin-template
+        run: pnpm tauri android build --debug --target aarch64 --apk
+
+      - name: Locate the APK
+        run: |
+          found="$(find apps/admin-template/src-tauri/gen/android -name '*.apk' -print)"
+          echo "$found"
+          test -n "$found" || {
+            echo "APK が見つからない" >&2
+            exit 1
+          }
+
+      - name: Upload the APK
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: banto-business-debug-apk
+          path: apps/admin-template/src-tauri/gen/android/**/*.apk
+          if-no-files-found: error
+          retention-days: 14
