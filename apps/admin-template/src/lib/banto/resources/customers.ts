@@ -41,9 +41,16 @@ export const customersSchema: FormSchema = {
 				return m['customers.fieldCode']();
 			},
 			type: 'text',
-			required: true,
-			min: 1,
-			max: 20
+			// 必須にしない: 空欄で保存すると Rust 側が C001 を採番する。
+			// 案件番号（要件 F-M3）と同じ扱いに揃えた —— 個人事業では顧客
+			// コードを自分で決める意味が薄く、毎回考えるのは手間でしかない。
+			// 会計ソフト側の得意先コードに合わせたい場合のために入力もできる。
+			max: 20,
+			// FieldDef に hint は無いので、自動採番の説明は placeholder で出す
+			// （案件の code 欄と同じ理由）。
+			get placeholder() {
+				return m['customers.codeAutoHint']();
+			}
 		},
 		{
 			name: 'name',

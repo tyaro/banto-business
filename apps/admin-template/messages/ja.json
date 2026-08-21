@@ -269,6 +269,7 @@
   "customers.resourceLabel": "顧客",
   "customers.description": "請求先と締日・支払条件を管理します",
   "customers.fieldCode": "顧客コード",
+  "customers.codeAutoHint": "空欄のまま保存すると C001 で自動採番します",
   "customers.fieldName": "顧客名",
   "customers.fieldContactPerson": "担当者",
   "customers.fieldAddress": "住所",

@@ -9,6 +9,12 @@
  * アプリを行き来するしかない。Phase 8 でスマホが操作の主体になる以上、
  * ここは名前で選べないと成立しない（実機で判明、`docs/domain/sync.md` 前提）。
  *
+ * ## 見出しに内部番号を出さない
+ *
+ * 顧客コードも案件番号も**自動採番される内部の識別子**（決定 C-9）。選ぶ
+ * ときに読む意味が無く、見出しに出すと「毎回コードを気にする作り」に見えて
+ * しまう。名前だけを出す。
+ *
  * ## なぜ「選択肢を注入する」形にするのか
  *
  * リソース定義（`resources/*.ts`）は静的なモジュールで、`get options()` で
@@ -41,20 +47,38 @@ interface Referenceable {
 	name: string;
 }
 
-/** `コード / 名前`。コードだけだと選べず、名前だけだと同名が区別できない。 */
-function toOption(row: Referenceable): FieldOption {
-	return { value: row.id, label: `${row.code} / ${row.name}` };
+interface ProjectRow extends Referenceable {
+	customerId: number;
 }
 
-async function load(resource: string, sortField: string): Promise<FieldOption[]> {
+/**
+ * 選択肢の見出し。
+ *
+ * **内部番号（顧客コード・案件番号）は出さない。** どちらも自動採番される
+ * 内部の識別子で、選ぶときに読む意味が無い —— 出すと「毎回コードを気にする
+ * 作り」に見えてしまう。
+ *
+ * 案件は `顧客名 / 案件名`。案件名だけだと、どの顧客の案件か分からない
+ * （「保守」「定期点検」のような名前は顧客をまたいで重なる）。顧客名を
+ * 引けなかった場合は案件名だけにする —— 見出しのために選択肢を落とさない。
+ */
+function customerOption(row: Referenceable): FieldOption {
+	return { value: row.id, label: row.name };
+}
+
+function projectOption(row: ProjectRow, customerNames: Map<number, string>): FieldOption {
+	const customer = customerNames.get(row.customerId);
+	return { value: row.id, label: customer ? `${customer} / ${row.name}` : row.name };
+}
+
+async function fetchRows<T>(resource: string, direction: 'asc' | 'desc'): Promise<T[]> {
 	const params: ListParams = {
-		// 新しいものほど上に来るようにする（直近の案件へ入力することが多い）。
-		sort: [{ field: sortField, direction: 'desc' }],
+		sort: [{ field: 'code', direction }],
 		filters: [],
 		pagination: { offset: 0, limit: LIMIT }
 	};
-	const result = await getDataProvider().getList<Referenceable>(resource, params);
-	return result.rows.map(toOption);
+	const result = await getDataProvider().getList<T>(resource, params);
+	return result.rows;
 }
 
 let projects = $state<FieldOption[]>([]);
@@ -77,7 +101,15 @@ export function customerOptions(): FieldOption[] {
  */
 export async function loadProjectOptions(): Promise<void> {
 	try {
-		projects = await load('projects', 'code');
+		// 顧客名を見出しに使うので顧客も引く。件数は個人事業の規模なので、
+		// 1回の呼び出しが2リクエストになること自体は問題にならない。
+		const [rows, customerRows] = await Promise.all([
+			// 新しい案件ほど上に来るようにする（直近の案件へ入力することが多い）。
+			fetchRows<ProjectRow>('projects', 'desc'),
+			fetchRows<Referenceable>('customers', 'asc')
+		]);
+		const names = new Map(customerRows.map((row) => [row.id, row.name]));
+		projects = rows.map((row) => projectOption(row, names));
 	} catch {
 		projects = [];
 	}
@@ -86,7 +118,8 @@ export async function loadProjectOptions(): Promise<void> {
 /** 顧客の選択肢を読み直す（同上）。 */
 export async function loadCustomerOptions(): Promise<void> {
 	try {
-		customers = await load('customers', 'code');
+		// 顧客はコード順（＝登録順）。案件と違い「直近」に寄せる理由が無い。
+		customers = (await fetchRows<Referenceable>('customers', 'asc')).map(customerOption);
 	} catch {
 		customers = [];
 	}

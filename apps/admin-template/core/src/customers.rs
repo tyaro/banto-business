@@ -68,6 +68,9 @@ pub struct CustomerInput {
 }
 
 const MAX_CODE_LEN: usize = 20;
+/// 自動採番の接頭辞と、その走査用の LIKE パターン。
+const CODE_PREFIX: &str = "C";
+const CODE_PREFIX_PATTERN: &str = "C%";
 const MAX_NAME_LEN: usize = 60;
 const MAX_TEXT_LEN: usize = 120;
 const MAX_NOTE_LEN: usize = 500;
@@ -167,7 +170,19 @@ struct NormalizedCustomer {
 fn validate(input: &CustomerInput) -> Result<NormalizedCustomer, BantoError> {
     let mut errors: Vec<FieldError> = Vec::new();
 
-    let code = check_required_text(&mut errors, "code", &input.code, MAX_CODE_LEN);
+    // **空欄を許す。** 空なら `create` が採番する（`next_code`）。個人事業では
+    // 顧客コードを自分で決める意味が薄く、`C001` を毎回考えるのは手間でしかない。
+    // 案件番号が既に同じ扱い（要件 F-M3）なので、そちらに揃えた。
+    //
+    // 会計ソフト側の得意先コードに合わせたい場合のために、**入力もできる**
+    // ままにしてある（必須にしないだけで、廃止はしない）。
+    let code = input.code.trim().to_string();
+    if code.chars().count() > MAX_CODE_LEN {
+        errors.push(FieldError {
+            field: "code".to_string(),
+            message: max_length_message(MAX_CODE_LEN),
+        });
+    }
     let name = check_required_text(&mut errors, "name", &input.name, MAX_NAME_LEN);
     let contact_person = check_optional_text(
         &mut errors,
@@ -397,8 +412,49 @@ impl CustomersService {
         .map_err(|err| banto_storage::not_found(err, RESOURCE, id.to_string()))
     }
 
+    /// 次の顧客コード `C001` を返す。既存の `C` + 数字のうち最大の連番 + 1。
+    ///
+    /// 欠番は詰めない（詰めると、削除した顧客の番号を別の顧客が引き継ぐ）。
+    /// 墓石も走査対象に含める —— 論理削除した行もコードを保持し続けるので
+    /// （`docs/domain/sync.md` 5.1）、詰めると UNIQUE 制約に当たる。
+    pub async fn next_code(&self) -> Result<String, BantoError> {
+        let dialect = self.db.dialect();
+        let sql = format!(
+            "SELECT code FROM customers WHERE code LIKE {} ORDER BY code DESC LIMIT 1",
+            dialect.placeholder(1)
+        );
+        let latest: Option<String> = match &self.db {
+            Db::Sqlite(pool) => {
+                sqlx::query_scalar(&sql)
+                    .bind(CODE_PREFIX_PATTERN)
+                    .fetch_optional(pool)
+                    .await
+            }
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => {
+                sqlx::query_scalar(&sql)
+                    .bind(CODE_PREFIX_PATTERN)
+                    .fetch_optional(pool)
+                    .await
+            }
+        }
+        .map_err(banto_storage::storage_error)?;
+
+        let next = latest
+            .as_deref()
+            .and_then(|code| code.strip_prefix(CODE_PREFIX))
+            .and_then(|seq| seq.parse::<u32>().ok())
+            .unwrap_or(0)
+            + 1;
+        Ok(format!("{CODE_PREFIX}{next:03}"))
+    }
+
     pub async fn create(&self, input: CustomerInput) -> Result<Customer, BantoError> {
-        let value = validate(&input)?;
+        let mut value = validate(&input)?;
+        // 空欄なら採番する（案件番号と同じ扱い、要件 F-M3）。
+        if value.code.is_empty() {
+            value.code = self.next_code().await?;
+        }
         let dialect = self.db.dialect();
         let today = today_expr(dialect);
         let sql = format!(
@@ -625,6 +681,51 @@ mod tests {
         CustomersService::new(pool)
     }
 
+    /// 顧客コードは空欄で保存できる（案件番号と同じ扱い、要件 F-M3）。
+    /// 個人事業では `C001` を毎回考えるのが手間でしかない。
+    #[tokio::test]
+    async fn a_blank_code_is_auto_numbered() {
+        let svc = service().await;
+        let first = svc.create(valid_input("")).await.expect("first");
+        let second = svc.create(valid_input("")).await.expect("second");
+
+        assert_eq!(first.code, "C001");
+        assert_eq!(second.code, "C002");
+    }
+
+    /// 会計ソフト側の得意先コードに合わせたい場合のために、入力もできる。
+    #[tokio::test]
+    async fn an_explicit_code_is_kept_as_given() {
+        let svc = service().await;
+        let created = svc
+            .create(valid_input("TOKUISAKI-9"))
+            .await
+            .expect("create");
+        assert_eq!(created.code, "TOKUISAKI-9");
+    }
+
+    /// 自分で付けたコードが混ざっていても、採番は `C` 付きの最大値を見る。
+    #[tokio::test]
+    async fn auto_numbering_ignores_codes_that_are_not_its_own() {
+        let svc = service().await;
+        svc.create(valid_input("ZZZ-999")).await.expect("manual");
+        let auto = svc.create(valid_input("")).await.expect("auto");
+        assert_eq!(auto.code, "C001");
+    }
+
+    /// **墓石のコードも走査対象。** 論理削除した行はコードを保持し続けるので
+    /// （`docs/domain/sync.md` 5.1）、詰めると UNIQUE 制約に当たる。
+    #[tokio::test]
+    async fn auto_numbering_does_not_reuse_a_deleted_code() {
+        let svc = service().await;
+        let first = svc.create(valid_input("")).await.expect("first");
+        assert_eq!(first.code, "C001");
+        svc.delete(first.id).await.expect("delete");
+
+        let next = svc.create(valid_input("")).await.expect("next");
+        assert_eq!(next.code, "C002", "消した番号を使い回さないこと");
+    }
+
     fn valid_input(code: &str) -> CustomerInput {
         CustomerInput {
             code: code.to_string(),
@@ -819,7 +920,9 @@ mod tests {
         let svc = service().await;
         let err = svc
             .create(CustomerInput {
-                code: "   ".to_string(),
+                // 空欄は**もう違反ではない**（採番される）。全件返すことを
+                // 確かめるテストなので、長さ違反に置き換えて code を残す。
+                code: "X".repeat(MAX_CODE_LEN + 1),
                 name: String::new(),
                 contact_person: None,
                 address: None,
