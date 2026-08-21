@@ -42,6 +42,7 @@ use admin_template_core::profitability::{ProfitabilityService, ProjectProfitabil
 use admin_template_core::projects::{Project, ProjectInput, ProjectsService};
 use admin_template_core::rest::{api_router, audited_credential_verifier, Services};
 use admin_template_core::settings::{AuditSettings, AuthSettings, ServerSettings, SettingsService};
+use admin_template_core::sync::protocol::SyncService;
 use admin_template_core::system_info::SystemInfoService;
 use admin_template_core::trips::{Trip, TripGenerationResult, TripInput, TripsService};
 use admin_template_core::users::{Role, UserIdentity, UserSummary, UsersService};
@@ -86,6 +87,10 @@ struct AppState {
     /// Phase 6（入金管理）。消込は請求書の残額の見え方も変えるため、
     /// PaymentsService が payments / invoices の変更イベントを送る。
     payments: PaymentsService,
+    /// Phase 8（デバイス間同期）。スマホが LAN に戻ったときに `/api/sync/*`
+    /// で読みに来る先。この段は読み取りのみで、Tauri コマンドの対は無い
+    /// （話しかける向きが常にスマホ → PC の一方向のため）。
+    sync: SyncService,
     /// The webview window's own session identity, set by `auth_login`/
     /// `auth_setup` and cleared by `auth_logout` - all called directly via
     /// `invoke()`, never through `/api/auth/login`. `Some` means logged in;
@@ -1485,6 +1490,7 @@ async fn start_embedded_server(
     invoices: InvoicesService,
     issuer: IssuerService,
     payments: PaymentsService,
+    sync: SyncService,
     users: UsersService,
     settings: SettingsService,
     audit: AuditLogService,
@@ -1514,6 +1520,7 @@ async fn start_embedded_server(
         invoices,
         issuer,
         payments,
+        sync,
         users,
         settings,
         audit,
@@ -1600,6 +1607,7 @@ async fn server_apply(
                 state.invoices.clone(),
                 state.issuer.clone(),
                 state.payments.clone(),
+                state.sync.clone(),
                 state.users.clone(),
                 state.settings.clone(),
                 state.audit.clone(),
@@ -2526,6 +2534,7 @@ pub fn run() {
             let payments = PaymentsService::new(db.clone()).with_events(events.clone());
             let users = UsersService::new(db.clone());
             let settings = SettingsService::new(db.clone());
+            let sync = SyncService::new(db.clone(), settings.clone());
             // 発行者情報は Banto の `settings` を入れ物として使う。
             let issuer = IssuerService::new(settings.clone());
             let backup = BackupService::new(db_path.clone(), db.clone());
@@ -2742,6 +2751,7 @@ pub fn run() {
                     invoices.clone(),
                     issuer.clone(),
                     payments.clone(),
+                    sync.clone(),
                     users.clone(),
                     settings.clone(),
                     audit.clone(),
@@ -2813,6 +2823,7 @@ pub fn run() {
                 invoices,
                 issuer,
                 payments,
+                sync,
                 auth: Mutex::new(initial_auth),
                 users,
                 settings,
@@ -2950,6 +2961,7 @@ mod tests {
             invoices: InvoicesService::new(pool.clone()),
             payments: PaymentsService::new(pool.clone()),
             issuer: IssuerService::new(SettingsService::new(pool.clone())),
+            sync: SyncService::new(pool.clone(), SettingsService::new(pool.clone())),
             auth: Mutex::new(None),
             users: UsersService::new(pool.clone()),
             settings: SettingsService::new(pool.clone()),
@@ -2999,6 +3011,7 @@ mod tests {
             invoices: InvoicesService::new(pool.clone()),
             payments: PaymentsService::new(pool.clone()),
             issuer: IssuerService::new(SettingsService::new(pool.clone())),
+            sync: SyncService::new(pool.clone(), SettingsService::new(pool.clone())),
             auth: Mutex::new(None),
             users: UsersService::new(pool.clone()),
             settings: SettingsService::new(pool.clone()),
