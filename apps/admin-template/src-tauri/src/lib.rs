@@ -2535,6 +2535,24 @@ pub fn run() {
             let users = UsersService::new(db.clone());
             let settings = SettingsService::new(db.clone());
             let sync = SyncService::new(db.clone(), settings.clone());
+
+            // Phase 8: この端末の採番レンジを、**データを作る前に**適用する
+            // （`docs/domain/sync.md` 3.1）。忘れた端末は既定（PC）のレンジで
+            // 採番を始め、同期して初めて衝突に気付く —— その時点では両方に
+            // 行が入っており、機械的に直せない。
+            //
+            // 設定が読めないときは起動を止める。「0 として続ける」を選ぶと、
+            // 番号を書き損じたスマホが PC のレンジで採番を始めてしまう。
+            // 止まれば設定（`sync.device.id`）を直すだけで復帰できる。
+            tauri::async_runtime::block_on(
+                admin_template_core::sync::apply_device_range_at_startup(&db, &settings),
+            )
+            .map_err(|err| {
+                format!(
+                    "同期のデバイス番号（設定キー {}）が読めないため起動できません: {err}",
+                    admin_template_core::sync::DEVICE_ID_KEY
+                )
+            })?;
             // 発行者情報は Banto の `settings` を入れ物として使う。
             let issuer = IssuerService::new(settings.clone());
             let backup = BackupService::new(db_path.clone(), db.clone());
@@ -3262,7 +3280,7 @@ mod tests {
     /// leg has no D-Bus/secret-service).
     #[tokio::test]
     async fn autologin_enable_is_recorded_as_settings_change() {
-        keyring::set_default_credential_builder(keyring::mock::default_credential_builder());
+        keyring_store::install_in_memory_backend_for_tests();
         let state = app_state().await;
         let admin = state
             .users
