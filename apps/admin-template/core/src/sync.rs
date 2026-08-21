@@ -159,6 +159,15 @@ pub async fn set_device_id(
 /// 墓石は同期の順序を追うための記録で、同じ日に消して作り直した行を
 /// 区別できないと困る。
 pub fn deleted_at_expr(dialect: banto_storage::Dialect) -> &'static str {
+    now_text_expr(dialect)
+}
+
+/// 現在日時を **TEXT として**返す SQL 式（両方言）。
+///
+/// `Dialect::now_expr()` は PostgreSQL で `NOW()`（timestamptz）を返すので、
+/// TEXT 列にそのまま入れると型エラーになる。SQLite に日時型が無く、この
+/// アプリの日時列がすべて TEXT であるための差。
+pub fn now_text_expr(dialect: banto_storage::Dialect) -> &'static str {
     match dialect {
         banto_storage::Dialect::Sqlite => "datetime('now')",
         banto_storage::Dialect::Postgres => "NOW()::text",
@@ -329,6 +338,94 @@ pub async fn peer_state(db: &Db, peer_device_id: i64) -> Result<PeerState, Banto
     .map_err(banto_storage::storage_error)?;
 
     Ok(found.unwrap_or_else(|| PeerState::unsynced(peer_device_id)))
+}
+
+/// この端末の outbox に記録された、その行の最後の `seq`（無ければ 0）。
+///
+/// 取り込み時の衝突判定に使う。相手が取り込み終えた seq より後にこちら側でも
+/// 変わっていれば、**両方が独立に直した**ということになる
+/// （`docs/domain/sync.md` 6節）。
+pub async fn last_change_seq(db: &Db, table: &str, row_key: &str) -> Result<i64, BantoError> {
+    let dialect = db.dialect();
+    let sql = format!(
+        "SELECT CAST(COALESCE(MAX(seq), 0) AS BIGINT) FROM sync_outbox \
+         WHERE table_name = {} AND row_key = {}",
+        dialect.placeholder(1),
+        dialect.placeholder(2)
+    );
+    match db {
+        Db::Sqlite(pool) => {
+            sqlx::query_scalar::<_, i64>(&sql)
+                .bind(table)
+                .bind(row_key)
+                .fetch_one(pool)
+                .await
+        }
+        #[cfg(feature = "postgres")]
+        Db::Postgres(pool) => {
+            sqlx::query_scalar::<_, i64>(&sql)
+                .bind(table)
+                .bind(row_key)
+                .fetch_one(pool)
+                .await
+        }
+    }
+    .map_err(banto_storage::storage_error)
+}
+
+/// 相手端末との進捗を刻む。
+///
+/// **下げない**（`max` / `GREATEST` を取る）。応答が前後したり、古い要求が
+/// 遅れて届いたりしたときに巻き戻すと、取り込み済みの範囲をもう一度
+/// 取り込みに行くことになる。多く取り込むこと自体は同値判定で吸収されるが、
+/// 巻き戻しは衝突の再提示を招くので避ける。
+pub async fn record_peer_progress(
+    db: &Db,
+    peer_device_id: i64,
+    received_through_seq: i64,
+    sent_through_seq: i64,
+) -> Result<(), BantoError> {
+    if !is_valid_device_id(peer_device_id) {
+        return Err(invalid_device_id(peer_device_id));
+    }
+    let dialect = db.dialect();
+    // 引き上げだけを行う関数名が方言で違う（SQLite は 2 引数の `max`）。
+    let greatest = match dialect {
+        banto_storage::Dialect::Sqlite => "max",
+        banto_storage::Dialect::Postgres => "GREATEST",
+    };
+    let sql = format!(
+        "INSERT INTO sync_state \
+         (peer_device_id, sent_through_seq, received_through_seq, last_synced_at) \
+         VALUES ({}, {}, {}, {now}) \
+         ON CONFLICT (peer_device_id) DO UPDATE SET \
+         sent_through_seq = {greatest}(sync_state.sent_through_seq, excluded.sent_through_seq), \
+         received_through_seq = \
+         {greatest}(sync_state.received_through_seq, excluded.received_through_seq), \
+         last_synced_at = excluded.last_synced_at",
+        dialect.placeholder(1),
+        dialect.placeholder(2),
+        dialect.placeholder(3),
+        now = now_text_expr(dialect)
+    );
+    match db {
+        Db::Sqlite(pool) => sqlx::query(&sql)
+            .bind(peer_device_id)
+            .bind(sent_through_seq)
+            .bind(received_through_seq)
+            .execute(pool)
+            .await
+            .map(|_| ()),
+        #[cfg(feature = "postgres")]
+        Db::Postgres(pool) => sqlx::query(&sql)
+            .bind(peer_device_id)
+            .bind(sent_through_seq)
+            .bind(received_through_seq)
+            .execute(pool)
+            .await
+            .map(|_| ()),
+    }
+    .map_err(banto_storage::storage_error)
 }
 
 /// 採番カウンタをこの端末のレンジ先頭まで進める。

@@ -3238,3 +3238,126 @@ async fn sync_reads_are_not_audited() {
         entries.rows
     );
 }
+
+/// 取り込み（`push`）だけが業務データを書き換えるので、他の変更ルートと
+/// 同じく editor 床。viewer は 403。
+#[tokio::test]
+async fn viewer_cannot_push_but_editor_can() {
+    let (router, _admin, editor, viewer) = router_with_role_tokens().await;
+
+    let request = json!({
+        "peerDeviceId": 1,
+        "pulledThroughSeq": 0,
+        "throughSeq": 0,
+        "rows": []
+    });
+
+    let denied = router
+        .clone()
+        .oneshot(post_json_auth("/api/sync/push", &viewer, request.clone()))
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+
+    let allowed = router
+        .oneshot(post_json_auth("/api/sync/push", &editor, request))
+        .await
+        .unwrap();
+    assert_eq!(allowed.status(), StatusCode::OK);
+    let body = body_json(allowed).await;
+    assert_eq!(body["applied"], 0);
+    assert_eq!(body["conflicts"], json!([]));
+}
+
+/// REST 経由で送った行が実際に入り、`*_list` から見えること。
+/// id は送り主のレンジ（10億〜）のまま入る。
+#[tokio::test]
+async fn a_pushed_row_lands_and_is_listable() {
+    let (router, _admin, editor, viewer) = router_with_role_tokens().await;
+
+    let response = router
+        .clone()
+        .oneshot(post_json_auth(
+            "/api/sync/push",
+            &editor,
+            json!({
+                "peerDeviceId": 1,
+                "pulledThroughSeq": 0,
+                "throughSeq": 7,
+                "rows": [{
+                    "table": "customers",
+                    "key": "1000000001",
+                    "values": {
+                        "id": 1000000001,
+                        "code": "P001",
+                        "name": "スマホで作った顧客",
+                        "contact_person": null,
+                        "address": null,
+                        "phone": null,
+                        "email": null,
+                        "billing_name": null,
+                        "closing_day": 99,
+                        "payment_month_offset": 1,
+                        "payment_day": 99,
+                        "note": null,
+                        "created_at": "2026-08-21",
+                        "updated_at": "2026-08-21",
+                        "deleted_at": null
+                    }
+                }]
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_json(response).await;
+    assert_eq!(body["applied"], 1);
+    assert_eq!(body["receivedThroughSeq"], 7);
+
+    let listed = router
+        .oneshot(post_json_auth("/api/customers/list", &viewer, json!({})))
+        .await
+        .unwrap();
+    let rows = body_json(listed).await;
+    assert_eq!(rows["totalCount"], 1);
+    assert_eq!(rows["rows"][0]["id"], 1000000001);
+    assert_eq!(rows["rows"][0]["code"], "P001");
+}
+
+/// 取り込みは監査に残る（conventions §1: mutating は監査する）。
+/// `detail` は件数だけで、行の中身は写さない。
+#[tokio::test]
+async fn a_push_is_audited_with_counts_only() {
+    let (router, audit, _admin, editor, _viewer) = router_with_role_tokens_and_audit().await;
+
+    router
+        .oneshot(post_json_auth(
+            "/api/sync/push",
+            &editor,
+            json!({
+                "peerDeviceId": 1,
+                "pulledThroughSeq": 0,
+                "throughSeq": 3,
+                "rows": []
+            }),
+        ))
+        .await
+        .unwrap();
+
+    let entries = audit.list(ListParams::default()).await.expect("audit list");
+    let entry = entries
+        .rows
+        .iter()
+        .find(|entry| entry.resource == "sync")
+        .expect("同期の取り込みは監査に残ること");
+    assert_eq!(entry.action, "push");
+    assert_eq!(entry.entity_id.as_deref(), Some("1"));
+
+    let detail: serde_json::Value =
+        serde_json::from_str(entry.detail.as_deref().expect("detail present"))
+            .expect("detail is json");
+    assert_eq!(
+        detail,
+        json!({ "applied": 0, "unchanged": 0, "conflicts": 0, "receivedThroughSeq": 3 })
+    );
+}

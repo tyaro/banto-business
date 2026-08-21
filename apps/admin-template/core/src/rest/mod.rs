@@ -66,6 +66,7 @@
 //! | POST   | `/api/outstanding/list` | `ListParams` | `ListResult<InvoiceSettlement>` (any role, 未入金一覧) |
 //! | POST   | `/api/sync/handshake` | `HandshakeRequest` | `Handshake` (any role, デバイス番号と進捗) |
 //! | POST   | `/api/sync/pull`     | `PullRequest`  | `Pull` (any role, PC 側で変わった行) |
+//! | POST   | `/api/sync/push`     | `PushRequest`  | `PushResult` (editor+, 相手の変更を取り込む) |
 //! | GET    | `/api/users`         | -              | `UserSummary[]` (admin) |
 //! | POST   | `/api/users`         | `{username,password,displayName,role}` | `UserIdentityResponse` (admin) |
 //! | PUT    | `/api/users/{id}`    | `{displayName,role}` | `UserSummary` (admin) |
@@ -188,12 +189,20 @@
 //! `crate::backup::BackupService::stage_restore_from_bytes`).
 //!
 //! `/api/sync/*` (Phase 8, `docs/domain/sync.md` 11節): スマホ（Pixel）が
-//! 自宅 LAN に戻ったときに PC へ話しかけるための入口。**この段は読み取り
-//! だけ**で、PC 側の DB を一切書き換えない —— スマホ側の変更を取り込む
-//! push は次段。したがって監査もしない（読み取りは監査しない、conventions
-//! §1）。話しかける向きが常にスマホ → PC の一方向なので、Tauri 側に対と
-//! なるコマンドは無い（PC は受けるだけ、スマホは HTTP クライアント
-//! として呼ぶだけ）。
+//! 自宅 LAN に戻ったときに PC へ話しかけるための入口。**話しかける向きは
+//! 常にスマホ → PC の一方向**なので、Tauri 側に対となるコマンドは無い ——
+//! PC は受けるだけ、スマホは HTTP クライアントとして呼ぶだけで、同じ操作が
+//! 両経路にある形にならない（§1 の対称の対象外。`verify-architecture.mjs`
+//! の `SERVER_ONLY` に分類）。
+//!
+//! `handshake` / `pull` は読み取りで、PC の DB を一切書き換えない（ロール床
+//! 無し・監査しない）。`push` だけが業務データを書き換えるので、他の変更
+//! ルートと同じく `editor` 床 + 監査（`action: "push"`, `resource: "sync"`）を
+//! 通す。監査の `detail` は件数のみで、行の中身は入れない —— 写すと監査ログ
+//! 自体が業務データの複製になる。
+//!
+//! **衝突した行は取り込まず、応答へ返すだけ**（`docs/domain/sync.md` 11.7）。
+//! PC 側に未解決の山を作らず、選ぶのは操作している側（スマホ）に任せる。
 //!
 //! `/api/attachments/*` (spec `docs/attachments-plan.md` §3.5, M20 unit B):
 //! same read/write RBAC split as the domain routes (`viewer`+ read,
@@ -252,7 +261,9 @@ use crate::payments::{InvoiceSettlement, Payment, PaymentDetail, PaymentInput, P
 use crate::profitability::{ProfitabilityService, ProjectProfitability};
 use crate::projects::{Project, ProjectInput, ProjectsService};
 use crate::settings::SettingsService;
-use crate::sync::protocol::{Handshake, HandshakeRequest, Pull, PullRequest, SyncService};
+use crate::sync::protocol::{
+    Handshake, HandshakeRequest, Pull, PullRequest, PushRequest, PushResult, SyncService,
+};
 use crate::system_info::SystemInfoService;
 use crate::trips::{Trip, TripGenerationResult, TripInput, TripsService};
 use crate::users::{Role, UsersService};
@@ -417,7 +428,7 @@ pub fn api_router(
         .merge(invoices_router(invoices, audit.clone(), auth.clone()))
         .merge(issuer_router(issuer, audit.clone(), auth.clone()))
         .merge(payments_router(payments, audit.clone(), auth.clone()))
-        .merge(sync_router(sync, auth.clone()))
+        .merge(sync_router(sync, audit.clone(), auth.clone()))
         .merge(users_router(users, audit.clone(), auth.clone()))
         .merge(audit_log_router(
             audit.clone(),
