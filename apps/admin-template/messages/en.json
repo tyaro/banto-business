@@ -600,5 +600,17 @@
   "sync.diffTheirs": "PC",
   "sync.takeMine": "Keep this device's",
   "sync.takeTheirs": "Keep the PC's",
-  "sync.resolveError": "Could not resolve the conflict."
+  "sync.resolveError": "Could not resolve the conflict.",
+  "nav.quick": "Quick entry",
+  "quick.title": "Quick entry",
+  "quick.description": "Log a single work entry with as few taps as possible. The project and category are remembered from last time.",
+  "quick.chooseProject": "Choose a project",
+  "quick.minutesPreset": "{minutes} min",
+  "quick.save": "Save entry",
+  "quick.saved": "Saved ({count} on this screen).",
+  "quick.saveError": "Could not save the entry.",
+  "quick.incomplete": "Choose a project and category, and enter a duration.",
+  "quick.dayTotal": "{date} total: {hours} h",
+  "quick.readOnlyTitle": "Read-only",
+  "quick.readOnlyDesc": "Logging work requires the editor role or higher."
 }

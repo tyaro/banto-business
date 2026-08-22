@@ -12,6 +12,7 @@ import * as m from '$lib/paraglide/messages';
 export type NavIconKey =
 	| 'dashboard'
 	| 'calendar'
+	| 'quick'
 	| 'customers'
 	| 'projects'
 	| 'work-logs'
@@ -33,6 +34,7 @@ export type NavIconKey =
 export type NavLabelKey =
 	| 'nav.dashboard'
 	| 'nav.calendar'
+	| 'nav.quick'
 	| 'nav.customers'
 	| 'nav.projects'
 	| 'nav.workLogs'
@@ -63,6 +65,9 @@ export const navItems: NavItem[] = [
 	{ path: '/calendar', labelKey: 'nav.calendar', icon: 'calendar' },
 	// Business ドメイン（Phase 2 基本マスター）。顧客 → 案件の順は
 	// docs/plan.md 第18章 Phase 2 の依存順（Customer → Project）に合わせる。
+	// クイック入力（Phase 8 ステップ6）。外出先で一番よく開く画面なので、
+	// 入力系の先頭に置く。
+	{ path: '/quick', labelKey: 'nav.quick', icon: 'quick' },
 	{ path: '/customers', labelKey: 'nav.customers', icon: 'customers' },
 	{ path: '/projects', labelKey: 'nav.projects', icon: 'projects' },
 	// Phase 3（工数・経費）。入力頻度の高い順に並べる（工数 → 出張 → 経費）。

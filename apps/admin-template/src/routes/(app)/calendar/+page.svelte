@@ -9,18 +9,7 @@
 	import * as m from '$lib/paraglide/messages';
 	import PageHeader from '$lib/components/ui/PageHeader.svelte';
 	import WorkCalendar from '$lib/components/business/WorkCalendar.svelte';
-
-	/**
-	 * 業務日付（JST 等のローカル日付。CLAUDE.md 4）。`toISOString()` は UTC を
-	 * 返すので使えない —— 日本時間の朝9時までが前日になってしまう。
-	 */
-	function localToday(): string {
-		const now = new Date();
-		const year = now.getFullYear();
-		const month = String(now.getMonth() + 1).padStart(2, '0');
-		const day = String(now.getDate()).padStart(2, '0');
-		return `${year}-${month}-${day}`;
-	}
+	import { localToday } from '$lib/banto/today';
 
 	const today = localToday();
 </script>

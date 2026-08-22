@@ -8,6 +8,7 @@ import type { Component } from 'svelte';
 import {
 	LayoutDashboard,
 	CalendarDays,
+	TimerReset,
 	Building2,
 	FolderKanban,
 	Clock,
@@ -28,6 +29,7 @@ import type { NavIconKey } from '$lib/navigation';
 export const NAV_ICONS: Record<NavIconKey, Component> = {
 	dashboard: LayoutDashboard,
 	calendar: CalendarDays,
+	quick: TimerReset,
 	customers: Building2,
 	projects: FolderKanban,
 	'work-logs': Clock,
