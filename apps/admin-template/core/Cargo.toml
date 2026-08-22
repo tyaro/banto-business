@@ -60,7 +60,14 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "si
 # 名指しするのは意図に沿う（TLS は `ADR-0003` どおりリバースプロキシ終端で、
 # LAN 内は平文）。
 reqwest = { workspace = true }
-rust-embed = { workspace = true, optional = true }
+# `debug-embed`: デバッグビルドでも**本当に埋め込む**。既定の rust-embed は
+# デバッグでは埋め込まず、コンパイル時のパスを覚えて実行時にファイル
+# システムから読む —— 開発機では同じパスに build/ があるので気付かないが、
+# **Android のデバッグ APK ではそのパスが存在せず、全資産が 404 になる**
+# （実験 APK のサイズが +47KB しか増えなかったことから発覚。埋め込まれて
+# いれば数 MB 増える）。埋め込みは embed-ui feature を立てたときだけ
+# なので、通常のローカルビルドには影響しない。
+rust-embed = { workspace = true, optional = true, features = ["debug-embed"] }
 futures-util = { workspace = true }
 
 [dev-dependencies]
