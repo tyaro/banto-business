@@ -106,9 +106,14 @@ jobs:
         working-directory: apps/admin-template
         run: pnpm tauri android init
 
+      # `--features embed-ui` で、LAN のブラウザへ配る実物の画面を APK に
+      # 同梱する（スマホ母艦の実験、docs/android-build.md 4.2）。webview 自身の
+      # 画面は frontendDist から入るので、この feature が効くのは埋め込み
+      # サーバーが LAN へ返す中身だけ。サイズ増は数 MB で、62MB の APK では
+      # 誤差の範囲。
       - name: Build the debug APK
         working-directory: apps/admin-template
-        run: pnpm tauri android build --debug --target aarch64 --apk
+        run: pnpm tauri android build --debug --target aarch64 --apk --features embed-ui
 
       - name: Locate the APK
         run: |
