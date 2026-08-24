@@ -37,7 +37,11 @@
 	async function handleSubmit(values: Record<string, unknown>) {
 		const result = await formResource.submit(normalizeFormValues(schema, values));
 		if (result.ok) {
-			goto(`${base}/expenses`);
+			// 一覧ではなく作った行の編集画面へ（docs/mobile-ui-plan.md P1-2）。
+			// 添付パネルは編集画面にしかないので、レシートをもらった場で
+			// 「入力 → その場で撮って添付」が 1 本の流れになる。
+			const id = (result.row as { id?: unknown }).id;
+			goto(typeof id === 'number' ? `${base}/expenses/${id}` : `${base}/expenses`);
 		} else {
 			// サーバ側（Rust）の検証エラーを該当の入力欄へ戻す。フィールド名を
 			// Rust の Input 構造体と揃えてあるのはこのため。

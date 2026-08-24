@@ -1,15 +1,18 @@
 <script lang="ts">
 	/**
-	 * App shell sidebar (visual-refresh-design.md §8.3). Four sections:
-	 * brand / primary nav / admin nav (role-gated, own heading) / footer
-	 * (collapse toggle). `overlayOpen` is owned by (app)/+layout.svelte (no
-	 * new global store) and only matters at <=900px, where this component
-	 * renders as a fixed slide-in drawer instead of the flex column.
+	 * App shell sidebar (visual-refresh-design.md §8.3). Sections: brand /
+	 * grouped nav / footer (collapse toggle). ナビは3群区分
+	 * （docs/mobile-ui-plan.md P1-4、`navigation.ts` の `navGroups`）で、
+	 * 各群に見出しを付ける。adminOnly 項目は従来どおりロールで**非表示**
+	 * （disabled ではない）。`overlayOpen` is owned by (app)/+layout.svelte
+	 * (no new global store) and only matters at <=900px, where this
+	 * component renders as a fixed slide-in drawer instead of the flex
+	 * column.
 	 */
 	import { page } from '$app/state';
 	import { base } from '$app/paths';
 	import * as m from '$lib/paraglide/messages';
-	import { navItems } from '$lib/navigation';
+	import { navGroups, navItems } from '$lib/navigation';
 	import { NAV_ICONS } from './navIcons';
 	import { settings } from '$lib/settings.svelte';
 	import { sessionStore } from '$lib/session.svelte';
@@ -31,10 +34,17 @@
 	// Spec M10 RBAC: hide admin-only entries (「ユーザー管理」) rather than
 	// showing them disabled - navigation-level hiding, same as
 	// routes/(app)/users/+page.ts redirecting a non-admin instead of
-	// rendering a 403 screen.
-	const mainItems = $derived(navItems.filter((item) => !item.adminOnly));
-	const adminItems = $derived(
-		isAdmin(sessionStore.role) ? navItems.filter((item) => item.adminOnly) : []
+	// rendering a 403 screen. 群ごとにフィルタし、空になった群は見出しごと
+	// 出さない（現状 viewer でも各群に最低1項目残るが、定義変更に備える）。
+	const visibleGroups = $derived(
+		navGroups
+			.map((group) => ({
+				...group,
+				items: navItems.filter(
+					(item) => item.group === group.key && (!item.adminOnly || isAdmin(sessionStore.role))
+				)
+			}))
+			.filter((group) => group.items.length > 0)
 	);
 </script>
 
@@ -52,41 +62,29 @@
 		<span class="brand-name">Banto Business</span>
 	</div>
 
-	<nav class="nav-section" aria-label={m['shell.mainNav']()}>
-		{#each mainItems as item (item.path)}
-			{@const Icon = NAV_ICONS[item.icon]}
-			<a
-				href={`${base}${item.path}`}
-				class="nav-item"
-				class:active={isActive(item.path)}
-				aria-current={isActive(item.path) ? 'page' : undefined}
-				title={settings.sidebarCollapsed ? m[item.labelKey]() : undefined}
-			>
-				<span class="icon"><Icon size={20} aria-hidden="true" /></span>
-				<span class="label">{m[item.labelKey]()}</span>
-			</a>
+	<nav class="nav-scroll" aria-label={m['shell.mainNav']()}>
+		{#each visibleGroups as group, index (group.key)}
+			{#if index > 0}
+				<div class="section-divider"></div>
+			{/if}
+			<div class="nav-section">
+				<p class="section-heading" aria-hidden="true">{m[group.labelKey]()}</p>
+				{#each group.items as item (item.path)}
+					{@const Icon = NAV_ICONS[item.icon]}
+					<a
+						href={`${base}${item.path}`}
+						class="nav-item"
+						class:active={isActive(item.path)}
+						aria-current={isActive(item.path) ? 'page' : undefined}
+						title={settings.sidebarCollapsed ? m[item.labelKey]() : undefined}
+					>
+						<span class="icon"><Icon size={20} aria-hidden="true" /></span>
+						<span class="label">{m[item.labelKey]()}</span>
+					</a>
+				{/each}
+			</div>
 		{/each}
 	</nav>
-
-	{#if adminItems.length > 0}
-		<div class="section-divider"></div>
-		<nav class="nav-section" aria-label={m['shell.adminNav']()}>
-			<p class="section-heading" aria-hidden="true">{m['shell.adminHeading']()}</p>
-			{#each adminItems as item (item.path)}
-				{@const Icon = NAV_ICONS[item.icon]}
-				<a
-					href={`${base}${item.path}`}
-					class="nav-item"
-					class:active={isActive(item.path)}
-					aria-current={isActive(item.path) ? 'page' : undefined}
-					title={settings.sidebarCollapsed ? m[item.labelKey]() : undefined}
-				>
-					<span class="icon"><Icon size={20} aria-hidden="true" /></span>
-					<span class="label">{m[item.labelKey]()}</span>
-				</a>
-			{/each}
-		</nav>
-	{/if}
 
 	<div class="footer">
 		<IconButton
@@ -103,6 +101,15 @@
 		flex-shrink: 0;
 		display: flex;
 		flex-direction: column;
+		/* 3群の見出し（P1-4）でナビが縦に伸びても、サイドバーが 100vh を
+		   超えてシェル全体（＝文書）を押し広げないよう画面高に固定し、
+		   ナビ部分（.nav-scroll）だけを内部スクロールにする。伸ばすと
+		   本文のグリッドまで連られて高くなり、クリック時のフォーカス
+		   スクロールで行がずれる（E2E がそれで落ちた）。sticky なのは
+		   本文が長いときにブランドとナビを画面に残すため。 */
+		position: sticky;
+		top: 0;
+		height: 100vh;
 		/* セーフエリア（app.css）。**常設表示のときも要る** —— 開いた Fold の
 		   内側はタブレット寸法で、サイドバーが畳まれずに画面の左端＝
 		   ステータスバーの真下から始まるため。下はジェスチャーバー。 */
@@ -156,6 +163,16 @@
 
 	aside.collapsed .brand-name {
 		opacity: 0;
+	}
+
+	/* 見出し付きの3群（P1-4）で縦が伸びるぶんはここが吸収する。背の低い
+	   画面ではナビだけがスクロールし、ブランドとフッターは固定のまま。 */
+	.nav-scroll {
+		display: flex;
+		flex-direction: column;
+		flex: 1 1 auto;
+		min-height: 0;
+		overflow-y: auto;
 	}
 
 	.nav-section {
@@ -266,6 +283,9 @@
 		aside {
 			position: fixed;
 			inset: 0 auto 0 0;
+			/* fixed + inset が高さを決める。100vh のままだと動的ツールバーの
+			   あるモバイルブラウザで実表示より高くなる。 */
+			height: auto;
 			z-index: 900;
 			/* Overlay mode has no fold concept (design.md §8.3): always full
 			   width regardless of the persisted collapsed setting. */

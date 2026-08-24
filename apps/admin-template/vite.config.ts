@@ -39,13 +39,7 @@ export default defineConfig({
 	// this. Packages with only `.svelte` components (charts/attachments/report)
 	// are fine - those go through the preprocessing path.
 	optimizeDeps: {
-		exclude: [
-			'@banto/admin-core',
-			'@banto/dock-svelte',
-			'@banto/forms',
-			'@banto/grid-svelte',
-			'@banto/tree-svelte'
-		]
+		exclude: ['@banto/admin-core', '@banto/dock-svelte', '@banto/forms', '@banto/grid-svelte']
 	},
 	// Fixed port so tauri.conf.json's devUrl always matches.
 	server: {

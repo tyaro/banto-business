@@ -169,6 +169,8 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await page.getByLabel('パスワード').fill(ADMIN_PASSWORD);
 		await page.getByRole('button', { name: 'ログイン' }).click();
 
+		// P1-1: ログイン後は「前回開いていた画面」へ戻る。ここまで admin が
+		// 開いたのは dashboard だけなので、従来と同じ dashboard に着地する。
 		await expect(page).toHaveURL(/\/dashboard$/);
 	});
 
@@ -253,7 +255,9 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await page.getByLabel('ユーザー名').fill(ADMIN_USERNAME);
 		await page.getByLabel('パスワード').fill(ADMIN_PASSWORD);
 		await page.getByRole('button', { name: 'ログイン' }).click();
-		await expect(page).toHaveURL(/\/dashboard$/);
+		// P1-1: 前回の画面へ戻る。admin が最後に開いた非 admin 画面は
+		// 顧客一覧（テスト3。テスト4の /users は adminOnly なので覚えない）。
+		await expect(page).toHaveURL(/\/customers$/);
 
 		await page.goto('/audit-log');
 
@@ -301,11 +305,10 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await page.getByLabel('支払先').fill(ATTACHMENT_EXPENSE_PAYEE);
 		await page.getByLabel('金額').fill('1200');
 		await page.getByRole('button', { name: '保存' }).click();
-		await expect(page).toHaveURL(/\/expenses$/);
-
-		await applyColumnFilter(page, '支払先', ATTACHMENT_EXPENSE_PAYEE);
-		const expenseId = await openRowAndGetId(page, ATTACHMENT_EXPENSE_PAYEE, 'expenses');
-		const expensePath = `/expenses/${expenseId}`;
+		// 経費だけは保存後に一覧ではなく編集画面へ遷移する（P1-2）——
+		// レシートをもらった場で「入力 → その場で添付」を 1 本にするため。
+		await expect(page).toHaveURL(/\/expenses\/\d+$/);
+		const expensePath = new URL(page.url()).pathname;
 		await expect(page.getByRole('heading', { name: '添付ファイル' })).toBeVisible();
 		await expect(page.getByText('添付ファイルはありません')).toBeVisible();
 

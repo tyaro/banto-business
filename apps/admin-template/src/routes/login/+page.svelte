@@ -4,6 +4,7 @@
 	import { getAuthProvider } from '@banto/admin-core';
 	import * as m from '$lib/paraglide/messages';
 	import { bantoReady, getBantoMode } from '$lib/banto/setup';
+	import { lastVisitedPath } from '$lib/banto/lastVisited';
 	import SurfaceCard from '$lib/components/ui/SurfaceCard.svelte';
 
 	// Undecided until `status()` resolves (or is absent, treated as
@@ -61,7 +62,9 @@
 			if (showRemember && remember) params.remember = true;
 			const result = await getAuthProvider().login(params);
 			if (result.success) {
-				goto(`${base}/dashboard`);
+				// 前回開いていた画面へ戻る（docs/mobile-ui-plan.md P1-1）。
+				// 覚えが無ければ従来どおり dashboard。
+				goto(`${base}${(await lastVisitedPath()) ?? '/dashboard'}`);
 			} else {
 				error = result.error ?? m['auth.loginFailed']();
 			}
