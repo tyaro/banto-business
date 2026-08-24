@@ -6,6 +6,7 @@
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import CommandPalette from '$lib/components/CommandPalette.svelte';
 	import { commandPaletteStore } from '$lib/commandPalette.svelte';
+	import { rememberLastVisited } from '$lib/banto/lastVisited';
 
 	let { children } = $props();
 
@@ -49,6 +50,12 @@
 		// eslint-disable-next-line @typescript-eslint/no-unused-expressions
 		page.url.pathname;
 		closeOverlay();
+	});
+
+	// 前回開いていた画面の記憶（docs/mobile-ui-plan.md P1-1）。次回ログイン時
+	// に login/+page.svelte がここへ戻す。
+	$effect(() => {
+		rememberLastVisited(page.url.pathname);
 	});
 
 	// Ctrl+K / Cmd+K (spec M16): a global toggle registered here (the app
