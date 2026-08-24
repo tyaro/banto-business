@@ -798,6 +798,9 @@ Invoice と Payment を PaymentAllocation 経由で関連付ける。
 
 実際の案件を Banto Business へ登録して使用する。
 
+> スマホ母艦（Phase 8 の運用転換）に合わせた動線の見直しは
+> `docs/mobile-ui-plan.md`。実施順もそちらに記載。
+
 **評価項目**
 
 - 入力速度

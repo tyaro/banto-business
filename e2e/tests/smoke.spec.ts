@@ -296,7 +296,8 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await page.goto('/expenses/new');
 		await page.getByLabel('案件').selectOption(String(projectId));
 		await page.getByLabel('支出日').fill('2026-08-20');
-		await page.getByLabel('分類').fill('TRANSPORT');
+		// 分類も選択式（コードを手打ちさせない）。`<option value>` はコード。
+		await page.getByLabel('分類').selectOption('TRANSPORT');
 		await page.getByLabel('支払先').fill(ATTACHMENT_EXPENSE_PAYEE);
 		await page.getByLabel('金額').fill('1200');
 		await page.getByRole('button', { name: '保存' }).click();

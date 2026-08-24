@@ -23,7 +23,12 @@
 	import { Plus } from '@lucide/svelte';
 	import * as m from '$lib/paraglide/messages';
 	import { gridMessages, columnValidationMessages } from '$lib/banto/i18n';
-	import { loadProjectOptions, projectLabel } from '$lib/banto/referenceOptions.svelte';
+	import {
+		loadProjectOptions,
+		projectLabel,
+		loadWorkCategoryOptions,
+		workCategoryLabel
+	} from '$lib/banto/referenceOptions.svelte';
 	import { workLogsSchema } from '$lib/banto/resources/work-logs';
 	import { sessionStore } from '$lib/session.svelte';
 	import { canWriteResources } from '$lib/permissions';
@@ -69,7 +74,8 @@
 				// 描くたびに呼ばれるので、非同期に届いた選択肢も反映される。
 				projectId: { width: 220, format: projectLabel },
 				workedOn: { width: 120 },
-				workCategoryCode: { width: 130 },
+				// 分類もコードではなく名前で見せる（`referenceOptions` の doc）。
+				workCategoryCode: { width: 130, format: workCategoryLabel },
 				minutes: { width: 110, format: minutesFormat },
 				appliedRate: { width: 130, format: amountFormat },
 				internalCost: { width: 130, format: amountFormat },
@@ -99,9 +105,10 @@
 	// `ItemsServerGrid.svelte` と同じく、読み込みと後片付けを **別々の**
 	// effect にする（1つにまとめると `windowed.params` に依存してしまい、
 	// sort/filter のたびに cleanup が走って invalidate 購読が切れる）。
-	// 案件名を列に出すための選択肢（`referenceOptions`）。
+	// 案件名・分類名を列に出すための選択肢（`referenceOptions`）。
 	$effect(() => {
 		void loadProjectOptions();
+		void loadWorkCategoryOptions();
 	});
 
 	$effect(() => {
