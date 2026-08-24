@@ -10,7 +10,7 @@
 import type { FieldOption, FormSchema } from '@banto/forms';
 import type { ResourceDefinition } from '@banto/admin-core';
 import * as m from '$lib/paraglide/messages';
-import { projectOptions } from '$lib/banto/referenceOptions.svelte';
+import { projectOptions, expenseCategoryOptions } from '$lib/banto/referenceOptions.svelte';
 
 /** 仕入側の税区分。Rust の `expenses::TAX_CATEGORIES` と同じ4値。 */
 export const TAX_CATEGORIES: { code: string; label: () => string }[] = [
@@ -58,8 +58,12 @@ export const expensesSchema: FormSchema = {
 			get label() {
 				return m['expenses.fieldExpenseCategoryCode']();
 			},
-			type: 'text',
-			required: true
+			// コードを手打ちさせない（`referenceOptions` の doc を参照）。
+			type: 'select',
+			required: true,
+			get options() {
+				return expenseCategoryOptions();
+			}
 		},
 		{
 			name: 'payee',

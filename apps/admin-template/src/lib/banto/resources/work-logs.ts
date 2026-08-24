@@ -14,7 +14,7 @@
 import type { ResourceDefinition } from '@banto/admin-core';
 import type { FormSchema } from '@banto/forms';
 import * as m from '$lib/paraglide/messages';
-import { projectOptions } from '$lib/banto/referenceOptions.svelte';
+import { projectOptions, workCategoryOptions } from '$lib/banto/referenceOptions.svelte';
 
 const integerValidate = (value: unknown): string | null =>
 	Number.isInteger(Number(value)) ? null : m['validation.integer']();
@@ -47,8 +47,13 @@ export const workLogsSchema: FormSchema = {
 			get label() {
 				return m['workLogs.fieldWorkCategoryCode']();
 			},
-			type: 'text',
-			required: true
+			// コードを手打ちさせない（`referenceOptions` の doc を参照）。
+			// クイック入力は最初から選択式で、通常フォームだけ手打ちだった。
+			type: 'select',
+			required: true,
+			get options() {
+				return workCategoryOptions();
+			}
 		},
 		{
 			name: 'minutes',

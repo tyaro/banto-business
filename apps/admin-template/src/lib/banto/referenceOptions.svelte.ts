@@ -1,5 +1,5 @@
 /**
- * 参照フィールド（案件・顧客）の選択肢。
+ * 参照フィールド（案件・顧客・作業分類・経費分類）の選択肢。
  *
  * ## なぜ要るのか
  *
@@ -37,6 +37,7 @@
  */
 import { getDataProvider, type ListParams } from '@banto/admin-core';
 import type { FieldOption } from '@banto/forms';
+import * as m from '$lib/paraglide/messages';
 
 /** 1度に読む上限。個人事業の規模では上限に当たらない想定。 */
 const LIMIT = 500;
@@ -139,5 +140,89 @@ export async function loadCustomerOptions(): Promise<void> {
 		customers = (await fetchRows<Referenceable>('customers', 'asc')).map(customerOption);
 	} catch {
 		customers = [];
+	}
+}
+
+/**
+ * 作業分類・経費分類の選択肢。
+ *
+ * 案件・顧客と事情は同じ —— `type: 'text'` のままだと**分類コードを手打ち**
+ * することになり、コード表を覚えていないと入力できない（スマホでは致命的）。
+ * 名前で選ばせる。値はコード（TEXT 主キー）そのまま。
+ *
+ * ## 停止中の分類も選択肢に残す
+ *
+ * 有効（`active`）だけに絞ると、停止済み分類が付いた**過去の行を編集した
+ * ときに選択が空に見え、保存すると別の値に化ける**。サーバ側も削除済み以外は
+ * 受ける（`work_logs.rs` は active を見ない）ので、こちらも全件出し、停止中
+ * だけ末尾に印を付けて区別する。新規で停止中を選べてしまうのは許容する ——
+ * 印が付いていて気付けるし、個人事業の規模で分類を停止すること自体が稀。
+ */
+interface CategoryRow {
+	code: string;
+	name: string;
+	active: number;
+}
+
+function categoryOption(row: CategoryRow): FieldOption {
+	return {
+		value: row.code,
+		label: row.active === 0 ? m['categories.inactiveOption']({ name: row.name }) : row.name
+	};
+}
+
+async function fetchCategoryRows(resource: string): Promise<FieldOption[]> {
+	const params: ListParams = {
+		sort: [{ field: 'sort_order', direction: 'asc' }],
+		filters: [],
+		pagination: { offset: 0, limit: LIMIT }
+	};
+	const result = await getDataProvider().getList<CategoryRow>(resource, params);
+	return result.rows.map(categoryOption);
+}
+
+let workCategories = $state<FieldOption[]>([]);
+let expenseCategories = $state<FieldOption[]>([]);
+
+/** 作業分類の選択肢（リソース定義の `get options()` から読む）。 */
+export function workCategoryOptions(): FieldOption[] {
+	return workCategories;
+}
+
+/**
+ * 作業分類コード → 名前。一覧の `作業分類` 列をコードではなく名前で描く。
+ * `projectLabel` と同じ理屈（セルを描くたびに呼ばれる `format` から読む）。
+ */
+export function workCategoryLabel(value: unknown): string {
+	const found = workCategories.find((option) => option.value === value);
+	return found ? found.label : String(value ?? '');
+}
+
+/** 作業分類の選択肢を読み直す。失敗は握りつぶす（`loadProjectOptions` と同じ）。 */
+export async function loadWorkCategoryOptions(): Promise<void> {
+	try {
+		workCategories = await fetchCategoryRows('work_categories');
+	} catch {
+		workCategories = [];
+	}
+}
+
+/** 経費分類の選択肢（同上）。 */
+export function expenseCategoryOptions(): FieldOption[] {
+	return expenseCategories;
+}
+
+/** 経費分類コード → 名前（同上）。 */
+export function expenseCategoryLabel(value: unknown): string {
+	const found = expenseCategories.find((option) => option.value === value);
+	return found ? found.label : String(value ?? '');
+}
+
+/** 経費分類の選択肢を読み直す（同上）。 */
+export async function loadExpenseCategoryOptions(): Promise<void> {
+	try {
+		expenseCategories = await fetchCategoryRows('expense_categories');
+	} catch {
+		expenseCategories = [];
 	}
 }

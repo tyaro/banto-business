@@ -14,7 +14,10 @@
 	import { createFormResource, getResource, isProviderError } from '@banto/admin-core';
 	import { AttachmentsPanel } from '@banto/attachments';
 	import * as m from '$lib/paraglide/messages';
-	import { loadProjectOptions } from '$lib/banto/referenceOptions.svelte';
+	import {
+		loadProjectOptions,
+		loadExpenseCategoryOptions
+	} from '$lib/banto/referenceOptions.svelte';
 	import { normalizeFormValues } from '$lib/banto/formValues';
 	import { isAttachmentsAvailable } from '$lib/banto/attachmentsAdmin';
 	import { attachmentsClient } from '$lib/banto/attachmentsClient';
@@ -45,9 +48,10 @@
 
 	async function loadForm() {
 		if (!formResource) return;
-		// 案件の選択肢（`referenceOptions`）。画面を開くたびに読み直す ——
-		// 起動時に1度だけだと、案件を作った直後にその案件が出てこない。
+		// 案件・経費分類の選択肢（`referenceOptions`）。画面を開くたびに
+		// 読み直す —— 起動時に1度だけだと、直後に作った値が出てこない。
 		void loadProjectOptions();
+		void loadExpenseCategoryOptions();
 		await formResource.load();
 		if (formResource.initialValues) {
 			store = createFormStore(schema, formResource.initialValues, formValidationMessages());

@@ -612,5 +612,6 @@
   "quick.incomplete": "案件・作業分類・時間を入れてください。",
   "quick.dayTotal": "{date} の合計: {hours} 時間",
   "quick.readOnlyTitle": "記録できません",
-  "quick.readOnlyDesc": "工数の記録には編集者以上の権限が要ります。"
+  "quick.readOnlyDesc": "工数の記録には編集者以上の権限が要ります。",
+  "categories.inactiveOption": "{name}（停止中）"
 }
