@@ -24,6 +24,11 @@
 # 使わないので `CLAUDE.md` 第8章の「fork からの PR では渡らない前提で
 # 設計する」も自明に満たす。
 #
+# **固定鍵で署名したリリース APK が要る経路（スマホ母艦への継続配布）は
+# `android-release.yml` へ分離した**（2026-08-25、Android アルファ）。この
+# ファイル自体の「デバッグ署名のまま・secrets を使わない」方針は変えていない。
+# 詳細は `docs/android-build.md`「リリースビルドと署名（アルファ以降）」。
+#
 # サードパーティ Action はコミット SHA でピン留めする（ci.yml 冒頭の方針。
 # dtolnay/rust-toolchain@stable の例外理由もそちらを参照）。
 name: Android build

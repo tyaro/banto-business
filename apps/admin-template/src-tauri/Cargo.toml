@@ -1,7 +1,9 @@
 [package]
 name = "admin-template"
 description = "Banto admin template Tauri app"
-version.workspace = true
+# version はここだけ workspace 継承を外している。理由は
+# `apps/admin-template/core/Cargo.toml` の同コメント参照。
+version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true

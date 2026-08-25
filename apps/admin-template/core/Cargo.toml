@@ -1,7 +1,12 @@
 [package]
 name = "admin-template-core"
 description = "admin-template domain/service layer (spec §10): shared by Tauri commands now, REST in M6"
-version.workspace = true
+# version はここだけ workspace 継承を外している。`workspace.package.version`
+# は Banto 由来クレート/パッケージが指す「派生元 Banto バージョン」
+# （docs/template-origin.md）で、アプリのリリースバージョンとは別軸のため
+# （2026-08-25、Android アルファ 0.1.0 仕切り直し。scripts/check-versions.mjs
+# もこの2軸を別グループとして検査する）。
+version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
