@@ -159,6 +159,11 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 
 		await expect(page).toHaveURL(/\/dashboard$/);
 		await expect(page.getByRole('heading', { name: 'ダッシュボード' })).toBeVisible();
+
+		// P2-1: 新規 DB は5項目すべて未完了なので、道しるべが最上部に出て
+		// いること（発行者情報が最初の項目）。
+		await expect(page.getByRole('heading', { name: 'はじめに' })).toBeVisible();
+		await expect(page.getByRole('link', { name: '発行者情報' })).toBeVisible();
 	});
 
 	test('2. logout returns to the login screen, then login restores the session', async () => {
@@ -302,6 +307,9 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await page.getByLabel('支出日').fill('2026-08-20');
 		// 分類も選択式（コードを手打ちさせない）。`<option value>` はコード。
 		await page.getByLabel('分類').selectOption('TRANSPORT');
+		// P2-2: 分類を選んだ直後、税区分がその分類の既定値（シード:
+		// `0010_expense_categories.sql` の TRANSPORT = STANDARD_10）に入ること。
+		await expect(page.getByLabel('税区分')).toHaveValue('STANDARD_10');
 		await page.getByLabel('支払先').fill(ATTACHMENT_EXPENSE_PAYEE);
 		await page.getByLabel('金額').fill('1200');
 		await page.getByRole('button', { name: '保存' }).click();

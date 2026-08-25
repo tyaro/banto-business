@@ -42,6 +42,7 @@ use admin_template_core::profitability::{ProfitabilityService, ProjectProfitabil
 use admin_template_core::projects::{Project, ProjectInput, ProjectsService};
 use admin_template_core::rest::{api_router, audited_credential_verifier, Services};
 use admin_template_core::settings::{AuditSettings, AuthSettings, ServerSettings, SettingsService};
+use admin_template_core::setup::{setup_status, SetupStatus};
 use admin_template_core::sync::client::SyncOutcome;
 use admin_template_core::sync::protocol::SyncService;
 use admin_template_core::system_info::SystemInfoService;
@@ -828,6 +829,17 @@ async fn issuer_update(
     )
     .await;
     Ok(settings)
+}
+
+/// 初期セットアップの道しるべ（`docs/mobile-ui-plan.md` P2-1）。読み取り専用
+/// なので監査は残さない（`issuer_get` と同じ扱い）。`issuer` と同じ床
+/// （**admin のみ**。発行者情報の有無を含むため）。専用の service を持たず、
+/// `SyncService::db()`（`Db` を持つ既存の唯一の公開アクセサ）と
+/// `IssuerService` を再利用する — SQL を重複させないため。
+#[tauri::command]
+async fn setup_status_get(state: State<'_, AppState>) -> Result<SetupStatus, BantoError> {
+    require_role(&state, Role::Admin, "setup_status").await?;
+    setup_status(state.sync.db(), &state.issuer).await
 }
 
 // --- Phase 8: 同期（`docs/domain/sync.md` 11節） ---
@@ -3207,6 +3219,7 @@ pub fn run() {
             invoices_cancel,
             issuer_get,
             issuer_update,
+            setup_status_get,
             sync_settings_get,
             sync_settings_apply,
             sync_run,

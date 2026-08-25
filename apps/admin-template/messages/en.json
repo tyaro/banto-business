@@ -583,5 +583,14 @@
   "quick.dayTotal": "{date} total: {hours} h",
   "quick.readOnlyTitle": "Read-only",
   "quick.readOnlyDesc": "Logging work requires the editor role or higher.",
-  "categories.inactiveOption": "{name} (inactive)"
+  "categories.inactiveOption": "{name} (inactive)",
+  "setupGuide.title": "Getting started",
+  "setupGuide.description": "Set these up in order to avoid confusion: issuer info → cost rates → customers → projects → work logs. This checklist disappears once everything is done.",
+  "setupGuide.itemIssuer": "Issuer information",
+  "setupGuide.itemRates": "Cost rates",
+  "setupGuide.itemCustomers": "Customers",
+  "setupGuide.itemProjects": "Projects",
+  "setupGuide.itemWorkLogs": "Work logs",
+  "setupGuide.statusDone": "Done",
+  "setupGuide.statusPending": "Not set"
 }

@@ -16,9 +16,11 @@
 	import * as m from '$lib/paraglide/messages';
 	import {
 		loadProjectOptions,
-		loadExpenseCategoryOptions
+		loadExpenseCategoryOptions,
+		expenseCategoryDefaultTaxOf
 	} from '$lib/banto/referenceOptions.svelte';
 	import { normalizeFormValues } from '$lib/banto/formValues';
+	import { ExpenseTaxCategoryTracker } from '$lib/banto/expenseTaxDefault';
 	import { isAttachmentsAvailable } from '$lib/banto/attachmentsAdmin';
 	import { attachmentsClient } from '$lib/banto/attachmentsClient';
 	import { formValidationMessages } from '$lib/banto/i18n';
@@ -45,6 +47,10 @@
 	const formResource = idValid ? createFormResource(resource.name, parsedId) : null;
 	let store = $state(createFormStore(schema, undefined, formValidationMessages()));
 	let storeReady = $state(false);
+	// P2-2: ロード直後は上書きしない — 「最後に見た分類コード」を読み込んだ
+	// 行の値で初期化することで、store を作り直した直後の1回目の同期を
+	// no-op にする（`docs/mobile-ui-plan.md`、ヘルパの doc を参照）。
+	let taxTracker = new ExpenseTaxCategoryTracker('');
 
 	async function loadForm() {
 		if (!formResource) return;
@@ -55,12 +61,21 @@
 		await formResource.load();
 		if (formResource.initialValues) {
 			store = createFormStore(schema, formResource.initialValues, formValidationMessages());
+			const loadedCode = String(formResource.initialValues.expenseCategoryCode ?? '');
+			taxTracker = new ExpenseTaxCategoryTracker(loadedCode);
 			storeReady = true;
 		}
 	}
 
 	$effect(() => {
 		void loadForm();
+	});
+
+	$effect(() => {
+		if (!storeReady) return;
+		const code = String(store.values.expenseCategoryCode ?? '');
+		const defaultTax = taxTracker.sync(code, expenseCategoryDefaultTaxOf);
+		if (defaultTax !== null) store.setValue('taxCategory', defaultTax);
 	});
 
 	const isNotFoundError = $derived.by(() => {

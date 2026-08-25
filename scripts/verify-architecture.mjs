@@ -331,7 +331,10 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 		{ tauri: 'system_info', rest: 'GET /api/system/info', role: 'Admin' },
 		{ tauri: 'profitability_get', rest: 'GET /api/profitability/{id}', role: 'Viewer' },
 		{ tauri: 'calendar_list', rest: 'POST /api/calendar/list', role: 'Viewer' },
-		{ tauri: 'issuer_get', rest: 'GET /api/issuer', role: 'Admin' }
+		{ tauri: 'issuer_get', rest: 'GET /api/issuer', role: 'Admin' },
+		// P2-1 初期セットアップの道しるべ（docs/mobile-ui-plan.md）。発行者
+		// 情報の有無を含むため issuer_get と同じ Admin 床。
+		{ tauri: 'setup_status_get', rest: 'GET /api/setup-status', role: 'Admin' }
 	];
 
 	// desktop-only（OS/ローカル統合。REST を持たないのが正しい、§1 の対称対象外）。
@@ -380,6 +383,7 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 		'invoices_get',
 		'invoices_list',
 		'issuer_get',
+		'setup_status_get',
 		'outstanding_list',
 		'payments_get',
 		'payments_list',
@@ -412,6 +416,7 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 		'GET /api/expenses/{id}',
 		'GET /api/invoices/{id}',
 		'GET /api/issuer',
+		'GET /api/setup-status',
 		'GET /api/profitability/{id}',
 		'GET /api/payments/{id}',
 		'GET /api/settlements/{id}',

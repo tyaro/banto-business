@@ -12,10 +12,12 @@
 	import * as m from '$lib/paraglide/messages';
 	import {
 		loadProjectOptions,
-		loadExpenseCategoryOptions
+		loadExpenseCategoryOptions,
+		expenseCategoryDefaultTaxOf
 	} from '$lib/banto/referenceOptions.svelte';
 	import { normalizeFormValues } from '$lib/banto/formValues';
 	import { formValidationMessages } from '$lib/banto/i18n';
+	import { ExpenseTaxCategoryTracker } from '$lib/banto/expenseTaxDefault';
 	import PageHeader from '$lib/components/ui/PageHeader.svelte';
 	import LoadingState from '$lib/components/ui/LoadingState.svelte';
 
@@ -26,12 +28,22 @@
 	// i18n layer ② (ADR-0005): Paraglide 由来の検証メッセージを注入する。
 	const store = createFormStore(schema, undefined, formValidationMessages());
 
+	// P2-2: 新規は未選択（''）から始まる。分類を選ぶたびに税区分へ既定値を
+	// 入れる（`docs/mobile-ui-plan.md`、ヘルパの doc を参照）。
+	const taxTracker = new ExpenseTaxCategoryTracker('');
+
 	// 案件・経費分類の選択肢（`referenceOptions`）。画面を開くたびに
 	// 読み直す —— 起動時に1度だけだと、直後に作った値が出てこない。
 	$effect(() => {
 		void loadProjectOptions();
 		void loadExpenseCategoryOptions();
 		void formResource.load();
+	});
+
+	$effect(() => {
+		const code = String(store.values.expenseCategoryCode ?? '');
+		const defaultTax = taxTracker.sync(code, expenseCategoryDefaultTaxOf);
+		if (defaultTax !== null) store.setValue('taxCategory', defaultTax);
 	});
 
 	async function handleSubmit(values: Record<string, unknown>) {
