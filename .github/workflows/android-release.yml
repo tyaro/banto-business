@@ -1,0 +1,284 @@
+# Android リリース APK のビルドと固定鍵署名（Android アルファ、docs/android-build.md
+# 「リリースビルドと署名（アルファ以降）」）。
+#
+# ## なぜ android-build.yml と分けるか
+#
+# `android-build.yml` は**デバッグ署名のまま**（毎回鍵が変わる）でよい前提
+# だった —— ストアを経由せず自分の端末へ直接入れる、使い捨てデータの実験
+# 機だったため（同ファイル冒頭コメント参照）。スマホ母艦化（docs/domain/sync.md
+# 0節）で実データを持つ端末へ**継続配布**する前提に変わり、更新のたびに
+# 鍵が変わるとアンインストール＝母艦DBが消える。そのため**固定鍵で署名した
+# リリース APK**を別経路として持つ。デバッグ経路自体の方針（署名しない）は
+# 変えていないので、ファイルごと分けた。
+#
+# ## トリガーと secrets の関係（CLAUDE.md 第8章）
+#
+# - `push: tags: ['v*']` … 本番経路。ドラフト Release を作成し APK を添付する
+# - `workflow_dispatch` … 動作確認用。Release は作らず artifact アップロード
+#   のみ
+# - `pull_request`（このファイルを変更した PR だけ） … android-build.yml と
+#   同じ理由で、このワークフロー自身の変更をその PR で実走させて確かめる。
+#   他に誰も踏まない経路
+#
+# 署名鍵は4つの Secrets（`ANDROID_KEYSTORE_B64` / `ANDROID_KEYSTORE_PASSWORD` /
+# `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD`）で渡す。fork からの PR には
+# secrets が渡らない（GitHub の既定動作）ので、PR 経路は自動的に「secrets
+# 無し」になる —— **タグ経路だけ secrets 必須で fail、PR/dispatch 経路は
+# 署名を skip して unsigned のまま artifact 化する**という下記の分岐で、
+# CLAUDE.md 第8章「fork からの PR では secrets が渡らない前提で設計する」を
+# 満たす。secrets の値はログに出さない（`set -x` は使わない。base64 デコード
+# も `echo` ではなく `printf` を使う）。
+#
+# ## 署名方式（apksigner 方式。gradle には手を入れない）
+#
+# `tauri android build` が出す unsigned の release APK を、ビルド後に
+# `zipalign` → `apksigner sign` で外付けに署名する。Tauri / Gradle 側の
+# signingConfig（key.properties 等）は使わない —— 生成物の gradle 構成に
+# 触れる範囲を増やさないため（4.1 節と同じ「生成物のまま使う」方針）。
+#
+# サードパーティ Action はコミット SHA でピン留めする（ci.yml 冒頭の方針）。
+name: Android release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/android-release.yml'
+
+concurrency:
+  group: android-release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    name: Build & sign release APK (aarch64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # タグ push かどうかで、後段の「secrets 無し」時の挙動（fail か skip か）
+      # と、最終的な APK のファイル名が変わる。
+      - name: Determine release context
+        id: ctx
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "is_tag=true" >> "$GITHUB_OUTPUT"
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_tag=false" >> "$GITHUB_OUTPUT"
+            echo "tag=" >> "$GITHUB_OUTPUT"
+          fi
+
+      # まず判定するだけで、鍵の値そのものはここでは扱わない。4つ全部揃って
+      # いなければ「無し」として扱う（一部だけ設定されている状態は事故なので
+      # 区別しない）。
+      - name: Check whether signing secrets are configured
+        id: signing
+        env:
+          HAS_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          HAS_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          HAS_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          HAS_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [[ -n "$HAS_KEYSTORE" && -n "$HAS_KEYSTORE_PASSWORD" && -n "$HAS_KEY_ALIAS" && -n "$HAS_KEY_PASSWORD" ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # タグ経路（＝配布物）で鍵が無いのは設定ミス。ビルドに5分以上かける前に
+      # ここで止める。署名なしのアルファは配布しない。
+      - name: Fail fast when the tag path has no signing secrets
+        if: steps.ctx.outputs.is_tag == 'true' && steps.signing.outputs.available != 'true'
+        run: |
+          echo "::error::タグ push だが署名 secrets が未設定（ANDROID_KEYSTORE_B64 / ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS / ANDROID_KEY_PASSWORD）。docs/android-build.md の手順で Secrets を登録してから、タグを付け直して push すること。署名なしのアルファ APK は配布しない。"
+          exit 1
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # Pixel 10 Fold は arm64。android-build.yml と同じ理由で他の ABI は
+          # 足さない。
+          targets: aarch64-linux-android
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: '. -> target'
+
+      # android-build.yml と同じ橋渡し（詳細は同ファイルのコメント参照）。
+      - name: Locate the Android SDK / NDK / JDK
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          echo "ANDROID_NDK_ROOT=$ANDROID_NDK_ROOT"
+          ls "$ANDROID_HOME/ndk" || true
+          test -n "$ANDROID_NDK_ROOT" || {
+            echo "ANDROID_NDK_ROOT が空。ランナーイメージの構成が変わった可能性がある" >&2
+            exit 1
+          }
+          echo "NDK_HOME=$ANDROID_NDK_ROOT" >> "$GITHUB_ENV"
+          java -version 2>&1
+          if [ -n "$JAVA_HOME_17_X64" ]; then
+            echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
+          fi
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # タグ名とマニフェスト version の整合（check-versions.mjs の --tag
+      # モード、ci.yml 冒頭コメントで予告されていた用途）。プレリリース
+      # サフィックス（v0.1.0-alpha.1 等）は許容される。ビルド前に止める。
+      - name: Verify the tag matches the app version
+        if: steps.ctx.outputs.is_tag == 'true'
+        env:
+          TAG: ${{ steps.ctx.outputs.tag }}
+        run: pnpm check:versions --tag "$TAG"
+
+      # `gen/android` は .gitignore 済みの生成物（android-build.yml と同じ）。
+      - name: Initialise the Android project
+        working-directory: apps/admin-template
+        run: pnpm tauri android init
+
+      # `--debug` を付けない。`embed-ui` は android-build.yml と同じ理由
+      # （スマホ母艦の実験、docs/android-build.md 4.2）。出力は unsigned の
+      # release APK。
+      - name: Build the release APK (unsigned)
+        working-directory: apps/admin-template
+        run: pnpm tauri android build --target aarch64 --apk --features embed-ui
+
+      - name: Locate the unsigned APK
+        run: |
+          found="$(find apps/admin-template/src-tauri/gen/android -name '*-unsigned.apk' -print)"
+          echo "$found"
+          test -n "$found" || {
+            echo "unsigned APK が見つからない" >&2
+            exit 1
+          }
+          count="$(echo "$found" | wc -l)"
+          if [ "$count" -ne 1 ]; then
+            echo "unsigned APK が複数見つかった。--target aarch64 単体ビルドの前提が崩れている" >&2
+            exit 1
+          fi
+          echo "UNSIGNED_APK=$found" >> "$GITHUB_ENV"
+
+      # zipalign → apksigner sign。キーストアは $RUNNER_TEMP へ base64
+      # デコードして置く（job 終了で自動的に消える）。`set -x` は使わず、
+      # 値の受け渡しは `env:` 経由にして secrets をコマンドライン引数の
+      # 文字列として組み立てない。
+      - name: Sign the release APK
+        if: steps.signing.outputs.available == 'true'
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          BUILD_TOOLS="$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
+          ZIPALIGN="$ANDROID_HOME/build-tools/$BUILD_TOOLS/zipalign"
+          APKSIGNER="$ANDROID_HOME/build-tools/$BUILD_TOOLS/apksigner"
+          echo "build-tools: $BUILD_TOOLS"
+
+          KEYSTORE_PATH="$RUNNER_TEMP/release.keystore"
+          printf '%s' "$KEYSTORE_B64" | base64 -d > "$KEYSTORE_PATH"
+
+          ALIGNED_APK="$RUNNER_TEMP/aligned.apk"
+          SIGNED_APK="$RUNNER_TEMP/signed.apk"
+          "$ZIPALIGN" -f -p 4 "$UNSIGNED_APK" "$ALIGNED_APK"
+          "$APKSIGNER" sign \
+            --ks "$KEYSTORE_PATH" \
+            --ks-pass env:KEYSTORE_PASSWORD \
+            --ks-key-alias "$KEY_ALIAS" \
+            --key-pass env:KEY_PASSWORD \
+            --out "$SIGNED_APK" \
+            "$ALIGNED_APK"
+
+          # 何で署名されたかを後から確認できるように、証明書ダイジェストを
+          # ログへ残す(鍵そのものではなく指紋なので secrets には当たらない)。
+          "$APKSIGNER" verify --print-certs "$SIGNED_APK"
+
+          echo "SIGNED_APK=$SIGNED_APK" >> "$GITHUB_ENV"
+          rm -f "$KEYSTORE_PATH"
+
+      # タグ経路で secrets が無ければ手前の fail-fast で既にジョブが止まって
+      # いるので、ここに来るのは workflow_dispatch / PR 経路のみ（想定内）。
+      - name: Report skipped signing
+        if: steps.signing.outputs.available != 'true'
+        run: echo "::notice::署名 secrets が未設定のため署名を skip した。unsigned のまま artifact 化する（workflow_dispatch / PR 経路の想定内の挙動）。"
+
+      # 署名済みなら `banto-business-<タグ名>-aarch64.apk`。dispatch/PR 経路は
+      # 動作確認用（配布物ではない）なので、実際に署名されたかに関わらず
+      # `banto-business-unsigned-aarch64.apk` に揃える —— タグ経路以外は
+      # 「これは配布物ではない」と名前で分かるようにするため。
+      - name: Name and stage the APK
+        id: stage
+        run: |
+          mkdir -p apps/admin-template/dist
+          if [[ "${{ steps.ctx.outputs.is_tag }}" == "true" ]]; then
+            NAME="banto-business-${{ steps.ctx.outputs.tag }}-aarch64.apk"
+            SRC="$SIGNED_APK"
+          else
+            NAME="banto-business-unsigned-aarch64.apk"
+            SRC="${SIGNED_APK:-$UNSIGNED_APK}"
+          fi
+          cp "$SRC" "apps/admin-template/dist/$NAME"
+          echo "apk_name=$NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the APK artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: banto-business-release-apk
+          path: apps/admin-template/dist/${{ steps.stage.outputs.apk_name }}
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Create draft GitHub Release
+    needs: apk
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download the APK artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: banto-business-release-apk
+          path: dist
+
+      # `gh` はランナー同梱。--draft なので公開はユーザーが手動で行う
+      # （docs/android-build.md「リリース手順」）。
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          gh release create "$TAG" \
+            --draft --verify-tag --title "$TAG" \
+            --notes "$(cat <<'EOF'
+          Android アルファ版の署名済み APK です。
+
+          導入手順は `docs/android-build.md`「リリースビルドと署名（アルファ以降）」を参照してください。
+          初回のみ署名方式が変わるため、既存アプリのアンインストールが必要です（データがある場合は先にバックアップしてください）。
+          EOF
+          )" \
+            dist/*.apk
