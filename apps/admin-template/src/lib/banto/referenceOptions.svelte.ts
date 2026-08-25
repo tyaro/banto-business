@@ -164,6 +164,11 @@ interface CategoryRow {
 	active: number;
 }
 
+/** 経費分類のみが持つ列（P2-2、`docs/mobile-ui-plan.md`）。 */
+interface ExpenseCategoryRow extends CategoryRow {
+	defaultTaxCategory: string;
+}
+
 function categoryOption(row: CategoryRow): FieldOption {
 	return {
 		value: row.code,
@@ -171,14 +176,14 @@ function categoryOption(row: CategoryRow): FieldOption {
 	};
 }
 
-async function fetchCategoryRows(resource: string): Promise<FieldOption[]> {
+async function fetchCategoryRows<T extends CategoryRow>(resource: string): Promise<T[]> {
 	const params: ListParams = {
 		sort: [{ field: 'sort_order', direction: 'asc' }],
 		filters: [],
 		pagination: { offset: 0, limit: LIMIT }
 	};
-	const result = await getDataProvider().getList<CategoryRow>(resource, params);
-	return result.rows.map(categoryOption);
+	const result = await getDataProvider().getList<T>(resource, params);
+	return result.rows;
 }
 
 let workCategories = $state<FieldOption[]>([]);
@@ -201,7 +206,7 @@ export function workCategoryLabel(value: unknown): string {
 /** 作業分類の選択肢を読み直す。失敗は握りつぶす（`loadProjectOptions` と同じ）。 */
 export async function loadWorkCategoryOptions(): Promise<void> {
 	try {
-		workCategories = await fetchCategoryRows('work_categories');
+		workCategories = (await fetchCategoryRows<CategoryRow>('work_categories')).map(categoryOption);
 	} catch {
 		workCategories = [];
 	}
@@ -218,11 +223,31 @@ export function expenseCategoryLabel(value: unknown): string {
 	return found ? found.label : String(value ?? '');
 }
 
-/** 経費分類の選択肢を読み直す（同上）。 */
+/**
+ * 経費分類コード → 既定の税区分（P2-2、`docs/mobile-ui-plan.md`）。
+ *
+ * サーバ側（`core/src/expenses.rs`）は `taxCategory` が空なら
+ * `expense_categories.default_tax_category` を使う実装を既に持つ —
+ * これはその値をフォーム側にも見せるための読み取り専用の写し。
+ * 未読み込み・未知のコードは `null`（呼び出し側は「何もしない」扱いにする）。
+ */
+const expenseCategoryDefaultTax = new Map<string, string>();
+
+export function expenseCategoryDefaultTaxOf(code: string): string | null {
+	return expenseCategoryDefaultTax.get(code) ?? null;
+}
+
+/** 経費分類の選択肢を読み直す（同上）。既定税区分の写しも同時に更新する。 */
 export async function loadExpenseCategoryOptions(): Promise<void> {
 	try {
-		expenseCategories = await fetchCategoryRows('expense_categories');
+		const rows = await fetchCategoryRows<ExpenseCategoryRow>('expense_categories');
+		expenseCategories = rows.map(categoryOption);
+		expenseCategoryDefaultTax.clear();
+		for (const row of rows) {
+			expenseCategoryDefaultTax.set(row.code, row.defaultTaxCategory);
+		}
 	} catch {
 		expenseCategories = [];
+		expenseCategoryDefaultTax.clear();
 	}
 }

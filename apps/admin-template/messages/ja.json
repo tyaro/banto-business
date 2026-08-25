@@ -583,5 +583,14 @@
   "quick.dayTotal": "{date} の合計: {hours} 時間",
   "quick.readOnlyTitle": "記録できません",
   "quick.readOnlyDesc": "工数の記録には編集者以上の権限が要ります。",
-  "categories.inactiveOption": "{name}（停止中）"
+  "categories.inactiveOption": "{name}（停止中）",
+  "setupGuide.title": "はじめに",
+  "setupGuide.description": "発行者情報 → 原価レート → 顧客 → 案件 → 工数の順に設定すると迷いません。すべて済むとこの案内は消えます。",
+  "setupGuide.itemIssuer": "発行者情報",
+  "setupGuide.itemRates": "原価レート",
+  "setupGuide.itemCustomers": "顧客",
+  "setupGuide.itemProjects": "案件",
+  "setupGuide.itemWorkLogs": "工数",
+  "setupGuide.statusDone": "済",
+  "setupGuide.statusPending": "未設定"
 }

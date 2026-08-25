@@ -57,6 +57,7 @@
 //! | POST   | `/api/invoices/{id}/cancel` | -       | `InvoiceDetail` (editor+, 赤伝) |
 //! | GET    | `/api/issuer`        | -              | `IssuerSettings` (admin)    |
 //! | PUT    | `/api/issuer`        | `IssuerInput`  | `IssuerSettings` (admin)    |
+//! | GET    | `/api/setup-status`  | -              | `SetupStatus` (admin, docs/mobile-ui-plan.md P2-1、初期セットアップの道しるべ) |
 //! | POST   | `/api/payments/list` | `ListParams`   | `ListResult<Payment>` (any role) |
 //! | GET    | `/api/payments/{id}` | -              | `PaymentDetail` (any role)  |
 //! | POST   | `/api/payments`      | `PaymentInput` | `PaymentDetail` (editor+)   |
@@ -279,6 +280,7 @@ mod masters;
 mod payments;
 mod profitability;
 mod projects;
+mod setup;
 mod sync;
 #[cfg(test)]
 mod tests;
@@ -302,6 +304,7 @@ use masters::masters_router;
 use payments::payments_router;
 use profitability::profitability_router;
 use projects::projects_router;
+use setup::setup_router;
 use sync::sync_router;
 use trips::trips_router;
 use work_logs::work_logs_router;
@@ -403,6 +406,15 @@ pub fn api_router(
         audit_logout_middleware,
     ));
 
+    // 初期セットアップの道しるべ（`docs/mobile-ui-plan.md` P2-1）は専用の
+    // service を持たず、既存の `SyncService::db()`（`Db` を持つ唯一の
+    // 公開アクセサ）と `IssuerService` を再利用する。両方とも下の
+    // `sync_router`/`issuer_router` へ move されるので、先に複製しておく
+    // （`Db` は Arc-backed、`IssuerService` は `settings` の clone なので
+    // どちらも複製は安い、conventions §2）。
+    let setup_db = sync.db().clone();
+    let issuer_for_setup = issuer.clone();
+
     Router::new()
         .merge(audited_auth_routes)
         .merge(extra_auth_router(
@@ -427,6 +439,12 @@ pub fn api_router(
         .merge(calendar_router(calendar, auth.clone()))
         .merge(invoices_router(invoices, audit.clone(), auth.clone()))
         .merge(issuer_router(issuer, audit.clone(), auth.clone()))
+        .merge(setup_router(
+            setup_db,
+            issuer_for_setup,
+            audit.clone(),
+            auth.clone(),
+        ))
         .merge(payments_router(payments, audit.clone(), auth.clone()))
         .merge(sync_router(sync, audit.clone(), auth.clone()))
         .merge(users_router(users, audit.clone(), auth.clone()))

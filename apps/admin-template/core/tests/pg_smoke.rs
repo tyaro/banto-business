@@ -29,6 +29,7 @@ use admin_template_core::payments::{PaymentAllocationInput, PaymentInput, Paymen
 use admin_template_core::profitability::ProfitabilityService;
 use admin_template_core::projects::{ProjectInput, ProjectsService};
 use admin_template_core::settings::SettingsService;
+use admin_template_core::setup::setup_status;
 use admin_template_core::sync::protocol::{
     ConflictReason, HandshakeRequest, PullRequest, PushRequest, PushRow, SyncService,
 };
@@ -1147,4 +1148,126 @@ async fn the_sync_client_side_queries_work_on_postgres() {
     assert!(admin_template_core::sync::conflicts::mark_resolved(&db, id)
         .await
         .is_err());
+}
+
+/// **P2-1 初期セットアップの道しるべ（`setup::setup_status`）の PostgreSQL 経路。**
+///
+/// `setup_status` の4クエリはどれも `CAST(COUNT(*) AS BIGINT)` を使う
+/// （レート判定は `work_categories LEFT JOIN cost_rates` の集計込み）。SQLite の
+/// 型親和性では `i64` に収まってしまい方言差が隠れるため、実 PostgreSQL で
+/// `numeric` に化けていないことをここで確かめる。
+#[tokio::test]
+async fn setup_status_queries_work_on_postgres() {
+    let Ok(url) = std::env::var("BANTO_TEST_PG_URL") else {
+        eprintln!("pg_smoke: BANTO_TEST_PG_URL unset - skipping (no PostgreSQL server)");
+        return;
+    };
+    // 同じ DB を共有するので直列化する（`PG_SMOKE_LOCK` の doc を参照）。
+    let _serialized = PG_SMOKE_LOCK.lock().await;
+
+    reset_schema(&url).await;
+    let db = init_db_from_target(&url)
+        .await
+        .expect("init_db_from_target should succeed");
+
+    let issuer = IssuerService::new(SettingsService::new(db.clone()));
+
+    // まっさらな DB: 全項目 false。
+    let status = setup_status(&db, &issuer)
+        .await
+        .expect("setup_status on postgres");
+    assert!(!status.issuer_done);
+    assert!(!status.rates_done);
+    assert!(!status.customers_done);
+    assert!(!status.projects_done);
+    assert!(!status.work_logs_done);
+    assert!(!status.all_done);
+
+    issuer
+        .set(IssuerInput {
+            name: Some("架空設計事務所".to_string()),
+            registration_number: Some("T1234567890123".to_string()),
+            address: None,
+            bank_account: None,
+            rounding_mode: "FLOOR".to_string(),
+        })
+        .await
+        .expect("issuer settings on postgres");
+
+    let customer = CustomersService::new(db.clone())
+        .create(range_customer("PG-SETUP1", "架空商事"))
+        .await
+        .expect("customer on postgres");
+    let project = ProjectsService::new(db.clone())
+        .create(ProjectInput {
+            code: "PG-SETUP-P1".to_string(),
+            customer_id: customer.id,
+            name: "架空案件".to_string(),
+            status: "IN_PROGRESS".to_string(),
+            started_on: None,
+            due_on: None,
+            estimate_amount: None,
+            contract_amount: None,
+            billing_hourly_rate: None,
+            scope: None,
+            note: None,
+        })
+        .await
+        .expect("project on postgres");
+
+    // 顧客・案件はできたが、レート未設定・工数ゼロなのでまだ all_done ではない。
+    let status = setup_status(&db, &issuer)
+        .await
+        .expect("setup_status after customer/project");
+    assert!(status.issuer_done);
+    assert!(status.customers_done);
+    assert!(status.projects_done);
+    assert!(!status.rates_done);
+    assert!(!status.work_logs_done);
+    assert!(!status.all_done);
+
+    // active な作業分類の全部にレートを設定する。
+    let masters = MastersService::new(db.clone());
+    let active_codes: Vec<String> = masters
+        .list_work_categories()
+        .await
+        .expect("list on postgres")
+        .into_iter()
+        .filter(|c| c.active == 1)
+        .map(|c| c.code)
+        .collect();
+    for code in &active_codes {
+        masters
+            .set_cost_rate(CostRateInput {
+                work_category_code: code.clone(),
+                hourly_rate: 5_000,
+            })
+            .await
+            .expect("cost rate on postgres");
+    }
+    let status = setup_status(&db, &issuer)
+        .await
+        .expect("setup_status after rates");
+    assert!(status.rates_done);
+    assert!(!status.all_done, "工数がまだ無い");
+
+    WorkLogsService::new(db.clone())
+        .create(WorkLogInput {
+            project_id: project.id,
+            trip_id: None,
+            worked_on: "2026-08-24".to_string(),
+            work_category_code: active_codes[0].clone(),
+            minutes: 60,
+            applied_rate: None,
+            description: None,
+            invoiced: false,
+        })
+        .await
+        .expect("work log on postgres");
+
+    let status = setup_status(&db, &issuer)
+        .await
+        .expect("setup_status after work log");
+    assert!(status.work_logs_done);
+    assert!(status.all_done);
 }
