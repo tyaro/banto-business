@@ -902,8 +902,19 @@ impl PaymentsService {
     ///
     /// 期限未設定の請求書も残額があれば含める（回収対象ではあるため）。並びは
     /// 期限が早い順で、未設定は末尾。
+    ///
+    /// `ORDER BY i.due_on` だけでは方言によって NULL の並びが割れる —
+    /// PostgreSQL は ASC で NULLS LAST が既定だが、SQLite は NULL を最小値
+    /// 扱いする（ASC で NULLS FIRST）ため「未設定は末尾」という上の doc が
+    /// SQLite では成立しない。顧客の支払条件が任意化された 2026-08-27 以降、
+    /// 期限未設定の確定済み請求書が実際に作られるようになったため、
+    /// `CASE WHEN ... THEN 1 ELSE 0` で NULL を明示的に最後へ回す
+    /// （両方言で同じ SQL が同じ結果になる、方言分岐なしの書き方）。
     pub async fn outstanding(&self) -> Result<Vec<InvoiceSettlement>, BantoError> {
-        let where_clause = format!("WHERE i.status = '{STATUS_ISSUED}' ORDER BY i.due_on");
+        let where_clause = format!(
+            "WHERE i.status = '{STATUS_ISSUED}' \
+             ORDER BY (CASE WHEN i.due_on IS NULL THEN 1 ELSE 0 END), i.due_on"
+        );
         let rows = self.settlements_where(&where_clause, None).await?;
         Ok(rows
             .into_iter()
@@ -921,6 +932,7 @@ mod tests {
     use crate::projects::{ProjectInput, ProjectsService};
 
     struct Fixture {
+        db: Db,
         payments: PaymentsService,
         invoices: InvoicesService,
         customer_id: i64,
@@ -939,9 +951,9 @@ mod tests {
                 phone: None,
                 email: None,
                 billing_name: None,
-                closing_day: DAY_END_OF_MONTH,
-                payment_month_offset: 1,
-                payment_day: DAY_END_OF_MONTH,
+                closing_day: Some(DAY_END_OF_MONTH),
+                payment_month_offset: Some(1),
+                payment_day: Some(DAY_END_OF_MONTH),
                 note: None,
             })
             .await
@@ -964,6 +976,55 @@ mod tests {
             .await
             .expect("project");
         Fixture {
+            db: pool.clone(),
+            payments: PaymentsService::new(pool.clone()),
+            invoices: InvoicesService::new(pool.clone()),
+            customer_id: customer.id,
+            project_id: project.id,
+        }
+    }
+
+    /// [`fixture`] と同じだが、**顧客の支払条件を3項目とも未設定**にする
+    /// （アルファ実使用からのフィードバックで 2026-08-27 に任意化）。
+    /// 確定時に支払期日を導出できないケースを再現するための専用フィクスチャ。
+    async fn fixture_with_unset_terms() -> Fixture {
+        let pool = migrate_memory().await.expect("migrate_memory");
+        let customers = CustomersService::new(pool.clone());
+        let customer = customers
+            .create(CustomerInput {
+                code: "C900".to_string(),
+                name: "架空工業".to_string(),
+                contact_person: None,
+                address: None,
+                phone: None,
+                email: None,
+                billing_name: None,
+                closing_day: None,
+                payment_month_offset: None,
+                payment_day: None,
+                note: None,
+            })
+            .await
+            .expect("customer with unset terms");
+        let projects = ProjectsService::new(pool.clone());
+        let project = projects
+            .create(ProjectInput {
+                code: String::new(),
+                customer_id: customer.id,
+                name: "架空案件2".to_string(),
+                status: "IN_PROGRESS".to_string(),
+                started_on: None,
+                due_on: None,
+                estimate_amount: None,
+                contract_amount: Some(1_000_000),
+                billing_hourly_rate: Some(10_000),
+                scope: None,
+                note: None,
+            })
+            .await
+            .expect("project");
+        Fixture {
+            db: pool.clone(),
             payments: PaymentsService::new(pool.clone()),
             invoices: InvoicesService::new(pool.clone()),
             customer_id: customer.id,
@@ -1386,6 +1447,113 @@ mod tests {
         assert_eq!(ids, vec![unpaid]);
         assert_eq!(outstanding[0].remaining_amount, 110_000);
         assert_eq!(outstanding[0].customer_name, "架空商事");
+    }
+
+    /// **支払条件が未設定の顧客の請求書は、期日 `NULL` のまま確定できる**
+    /// （アルファ実使用からのフィードバック、2026-08-27）。期日が無いので
+    /// Overdue にはならないが、残額がある限り未入金一覧には**載る**
+    /// （`CLAUDE.md` 1.5 の導出定義の自然な帰結。回収対象であることに変わりは
+    /// ない）。
+    #[tokio::test]
+    async fn a_null_due_date_invoice_is_never_overdue_but_still_outstanding() {
+        let f = fixture_with_unset_terms().await;
+        let invoice_id = f.issue_invoice(100_000).await;
+
+        let settled = f.payments.settlement(invoice_id).await.expect("settlement");
+        assert_eq!(settled.due_on, None);
+        assert_eq!(settled.remaining_amount, 110_000);
+        assert!(!settled.overdue, "期日が無いのに期限超過と判定されている");
+        assert_eq!(settled.settlement_status, "ISSUED");
+
+        let outstanding = f.payments.outstanding().await.expect("outstanding");
+        let ids: Vec<i64> = outstanding.iter().map(|s| s.invoice_id).collect();
+        assert!(
+            ids.contains(&invoice_id),
+            "期日未設定でも残額がある限り未入金一覧に載ること: {ids:?}"
+        );
+        assert!(!outstanding[ids.iter().position(|id| *id == invoice_id).unwrap()].overdue);
+    }
+
+    /// 未入金一覧の並びは期限が早い順で、**期日未設定は末尾**（`outstanding`
+    /// の doc コメント）。SQLite は `ORDER BY` で NULL を既定では先頭に
+    /// 置く（ASC で NULLS FIRST）ので、この順序は明示的な `CASE` 式が
+    /// 効いていないと壊れる。
+    #[tokio::test]
+    async fn outstanding_orders_by_due_date_with_unset_due_dates_last() {
+        let f = fixture().await;
+        let dated = f.issue_invoice(100_000).await;
+
+        // 同一 DB 上に、支払条件が未設定の顧客・案件・請求書をもう1件作る
+        // （`outstanding` は DB 全体を見るので、同じプールに無いと一覧が
+        // 空いた2つの DB を跨いで比較することになってしまう）。
+        let no_terms_customer = CustomersService::new(f.db.clone())
+            .create(CustomerInput {
+                code: "C901".to_string(),
+                name: "架空建設".to_string(),
+                contact_person: None,
+                address: None,
+                phone: None,
+                email: None,
+                billing_name: None,
+                closing_day: None,
+                payment_month_offset: None,
+                payment_day: None,
+                note: None,
+            })
+            .await
+            .expect("customer with unset terms on the shared pool");
+        let no_terms_project = ProjectsService::new(f.db.clone())
+            .create(ProjectInput {
+                code: String::new(),
+                customer_id: no_terms_customer.id,
+                name: "架空案件3".to_string(),
+                status: "IN_PROGRESS".to_string(),
+                started_on: None,
+                due_on: None,
+                estimate_amount: None,
+                contract_amount: None,
+                billing_hourly_rate: Some(10_000),
+                scope: None,
+                note: None,
+            })
+            .await
+            .expect("project on the shared pool");
+        let draft = f
+            .invoices
+            .create(InvoiceInput {
+                customer_id: no_terms_customer.id,
+                closing_on: None,
+                due_on: None,
+                corrected_invoice_id: None,
+                note: None,
+                lines: vec![InvoiceLineInput {
+                    project_id: no_terms_project.id,
+                    item_name: "施工".to_string(),
+                    quantity: 1,
+                    unit_price: 50_000,
+                    tax_category: "STANDARD_10".to_string(),
+                    source_type: None,
+                    source_id: None,
+                    note: None,
+                }],
+            })
+            .await
+            .expect("draft on the shared pool");
+        let undated = f
+            .invoices
+            .issue(draft.invoice.id)
+            .await
+            .expect("issue on the shared pool")
+            .invoice
+            .id;
+
+        let outstanding = f.payments.outstanding().await.expect("outstanding");
+        let ids: Vec<i64> = outstanding.iter().map(|s| s.invoice_id).collect();
+        assert_eq!(
+            ids,
+            vec![dated, undated],
+            "期日ありが先、期日未設定（NULL）が末尾に来ること: {ids:?}"
+        );
     }
 
     #[tokio::test]

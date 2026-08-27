@@ -3817,9 +3817,9 @@ mod tests {
                 phone: None,
                 email: None,
                 billing_name: None,
-                closing_day: 99,
-                payment_month_offset: 1,
-                payment_day: 99,
+                closing_day: Some(99),
+                payment_month_offset: Some(1),
+                payment_day: Some(99),
                 note: None,
             })
             .await

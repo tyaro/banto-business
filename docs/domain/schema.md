@@ -63,22 +63,27 @@ Phase 1 の確定内容（`open-questions.md`）に基づくテーブル定義�
 
 ### 2.1 `customers`
 
-| 列                          | 型                         | 説明                                       |
-| --------------------------- | -------------------------- | ------------------------------------------ |
-| `id`                        | `INTEGER PK AUTOINCREMENT` |                                            |
-| `code`                      | `TEXT NOT NULL UNIQUE`     | 顧客コード（空欄なら `C001` で自動採番）   |
-| `name`                      | `TEXT NOT NULL`            |                                            |
-| `contact_person`            | `TEXT`                     | 担当者                                     |
-| `address`                   | `TEXT`                     |                                            |
-| `phone` / `email`           | `TEXT`                     |                                            |
-| `billing_name`              | `TEXT`                     | 請求先名（顧客名と異なる場合）             |
-| `closing_day`               | `INTEGER NOT NULL`         | 締日。1〜28 または **99（月末）**          |
-| `payment_month_offset`      | `INTEGER NOT NULL`         | 締日から何ヶ月後に支払われるか（1 = 翌月） |
-| `payment_day`               | `INTEGER NOT NULL`         | 支払日。1〜28 または **99（月末）**        |
-| `note`                      | `TEXT`                     |                                            |
-| `created_at` / `updated_at` | `TEXT NOT NULL`            |                                            |
+| 列                          | 型                         | 説明                                             |
+| --------------------------- | -------------------------- | ------------------------------------------------ |
+| `id`                        | `INTEGER PK AUTOINCREMENT` |                                                  |
+| `code`                      | `TEXT NOT NULL UNIQUE`     | 顧客コード（空欄なら `C001` で自動採番）         |
+| `name`                      | `TEXT NOT NULL`            |                                                  |
+| `contact_person`            | `TEXT`                     | 担当者                                           |
+| `address`                   | `TEXT`                     |                                                  |
+| `phone` / `email`           | `TEXT`                     |                                                  |
+| `billing_name`              | `TEXT`                     | 請求先名（顧客名と異なる場合）                   |
+| `closing_day`               | `INTEGER`                  | 締日。1〜28 または **99（月末）**。任意（下記）  |
+| `payment_month_offset`      | `INTEGER`                  | 締日から何ヶ月後に支払われるか（1 = 翌月）。任意 |
+| `payment_day`               | `INTEGER`                  | 支払日。1〜28 または **99（月末）**。任意        |
+| `note`                      | `TEXT`                     |                                                  |
+| `created_at` / `updated_at` | `TEXT NOT NULL`            |                                                  |
 
 > 「月末締め・翌月末払い」＝ `closing_day=99, payment_month_offset=1, payment_day=99`。**土日祝の調整はしない**（C-8）。
+>
+> 3項目とも **任意**（`NULL` 許容。2026-08-27、アルファ実使用からのフィードバックで
+> C-8 を改訂 — `docs/domain/open-questions.md` 参照）。導入時点で支払条件が決まって
+> いない顧客も登録でき、後から埋められる。未設定のまま Invoice を確定すると
+> `due_on` は `NULL` のまま（支払期限を導出しない）。
 
 ### 2.2 `projects`
 
@@ -160,25 +165,25 @@ Phase 1 の確定内容（`open-questions.md`）に基づくテーブル定義�
 
 ### 4.1 `invoices`
 
-| 列                           | 型                                          | 説明                                                                                                         |
-| ---------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `id`                         | `INTEGER PK AUTOINCREMENT`                  |                                                                                                              |
-| `invoice_number`             | `TEXT UNIQUE`                               | `INV-YYYY-NNNN`。**Draft では NULL、確定時に採番**（欠番を作らないため）                                     |
-| `customer_id`                | `INTEGER NOT NULL REFERENCES customers(id)` | **`project_id` は持たない**（`CLAUDE.md` 1.3）                                                               |
-| `status`                     | `TEXT NOT NULL`                             | `DRAFT` / `ISSUED` / `CANCELLED` のみ。**`PARTIALLY_PAID` / `PAID` / `OVERDUE` は保持しない**（導出値）      |
-| `issued_on`                  | `TEXT`                                      | 発行日（取引年月日）。確定時に確定                                                                           |
-| `closing_on`                 | `TEXT`                                      | 締日                                                                                                         |
-| `due_on`                     | `TEXT`                                      | **支払期限。確定時に顧客マスタから算出して保存**（マスタ変更が過去に波及しないこと）                         |
-| `corrected_invoice_id`       | `INTEGER`                                   | 赤伝で差し替えた元請求書（C-10）。**外部キー制約は張らない**（取消済み請求書の削除可否に引きずられないため） |
-| `total_taxable`              | `INTEGER NOT NULL DEFAULT 0`                | 税抜合計（確定時スナップショット）                                                                           |
-| `total_tax`                  | `INTEGER NOT NULL DEFAULT 0`                | 消費税合計（同上）                                                                                           |
-| `total_amount`               | `INTEGER NOT NULL DEFAULT 0`                | 税込合計（同上）                                                                                             |
-| `rounding_mode`              | `TEXT NOT NULL`                             | `FLOOR` / `ROUND` / `CEIL`。**確定時の設定値をスナップショット**（`CLAUDE.md` 1.7）                          |
-| `issuer_name`                | `TEXT`                                      | 確定時の発行者名（settings のスナップショット）                                                              |
-| `issuer_registration_number` | `TEXT`                                      | 確定時の登録番号（同上）                                                                                     |
-| `issuer_address`             | `TEXT`                                      |                                                                                                              |
-| `note`                       | `TEXT`                                      |                                                                                                              |
-| `created_at` / `updated_at`  | `TEXT NOT NULL`                             |                                                                                                              |
+| 列                           | 型                                          | 説明                                                                                                                                                                     |
+| ---------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `id`                         | `INTEGER PK AUTOINCREMENT`                  |                                                                                                                                                                          |
+| `invoice_number`             | `TEXT UNIQUE`                               | `INV-YYYY-NNNN`。**Draft では NULL、確定時に採番**（欠番を作らないため）                                                                                                 |
+| `customer_id`                | `INTEGER NOT NULL REFERENCES customers(id)` | **`project_id` は持たない**（`CLAUDE.md` 1.3）                                                                                                                           |
+| `status`                     | `TEXT NOT NULL`                             | `DRAFT` / `ISSUED` / `CANCELLED` のみ。**`PARTIALLY_PAID` / `PAID` / `OVERDUE` は保持しない**（導出値）                                                                  |
+| `issued_on`                  | `TEXT`                                      | 発行日（取引年月日）。確定時に確定                                                                                                                                       |
+| `closing_on`                 | `TEXT`                                      | 締日                                                                                                                                                                     |
+| `due_on`                     | `TEXT`                                      | **支払期限。確定時に顧客マスタから算出して保存**（マスタ変更が過去に波及しないこと）。顧客の支払条件が未設定なら導出できず `NULL` のまま確定する（2026-08-27、C-8 改訂） |
+| `corrected_invoice_id`       | `INTEGER`                                   | 赤伝で差し替えた元請求書（C-10）。**外部キー制約は張らない**（取消済み請求書の削除可否に引きずられないため）                                                             |
+| `total_taxable`              | `INTEGER NOT NULL DEFAULT 0`                | 税抜合計（確定時スナップショット）                                                                                                                                       |
+| `total_tax`                  | `INTEGER NOT NULL DEFAULT 0`                | 消費税合計（同上）                                                                                                                                                       |
+| `total_amount`               | `INTEGER NOT NULL DEFAULT 0`                | 税込合計（同上）                                                                                                                                                         |
+| `rounding_mode`              | `TEXT NOT NULL`                             | `FLOOR` / `ROUND` / `CEIL`。**確定時の設定値をスナップショット**（`CLAUDE.md` 1.7）                                                                                      |
+| `issuer_name`                | `TEXT`                                      | 確定時の発行者名（settings のスナップショット）                                                                                                                          |
+| `issuer_registration_number` | `TEXT`                                      | 確定時の登録番号（同上）                                                                                                                                                 |
+| `issuer_address`             | `TEXT`                                      |                                                                                                                                                                          |
+| `note`                       | `TEXT`                                      |                                                                                                                                                                          |
+| `created_at` / `updated_at`  | `TEXT NOT NULL`                             |                                                                                                                                                                          |
 
 ### 4.2 `invoice_lines`
 

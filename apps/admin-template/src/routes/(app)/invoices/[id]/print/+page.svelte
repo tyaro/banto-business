@@ -78,7 +78,10 @@
 			invoiceNumber: detail.invoiceNumber ?? '',
 			issuedOn: detail.issuedOn ?? '',
 			closingOn: detail.closingOn ?? '',
-			dueOn: detail.dueOn ?? '',
+			// 支払条件が未設定の顧客の請求書は期日を導出できないまま確定できる
+			// （アルファ実使用からのフィードバック、2026-08-27）。空文字だと
+			// 表の行が欠けて見えるので、PDF では未設定を明示する。
+			dueOn: detail.dueOn ?? m['invoices.dueOnUnsetOnPrint'](),
 			totalTaxable: detail.totalTaxable,
 			totalTax: detail.totalTax,
 			totalAmount: detail.totalAmount,

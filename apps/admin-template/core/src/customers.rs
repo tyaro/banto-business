@@ -9,7 +9,11 @@
 //! 入力欄へ戻るようにする（`items.rs` と同じ流儀）。
 //!
 //! 締日・支払条件をコード値で持つ理由と 99（月末）の意味は Phase 1 の決定
-//! C-8（`docs/domain/open-questions.md`）にある。
+//! C-8（`docs/domain/open-questions.md`）にある。**3項目とも任意**
+//! （2026-08-27、アルファ実使用からのフィードバックで必須を撤廃 —
+//! 導入時点で支払条件が決まっていない顧客も登録でき、後から埋められる）。
+//! `Some` のときだけ従来の値域（1..=28 または 99、オフセット 0..=6）を
+//! 検証する。
 
 use banto_core::{BantoError, FieldError, ListParams, ListResult};
 use banto_server::ServerEvent;
@@ -33,15 +37,18 @@ pub struct Customer {
     pub email: Option<String>,
     #[sqlx(rename = "billing_name")]
     pub billing_name: Option<String>,
-    /// 締日。1..=28 または 99（月末）。
+    /// 締日。1..=28 または 99（月末）。**任意**（アルファ実使用からの
+    /// フィードバックで 2026-08-27 に必須を撤廃。未設定なら `None` —
+    /// 導入時点で支払条件が決まっていない顧客も登録できるようにする）。
     #[sqlx(rename = "closing_day")]
-    pub closing_day: i64,
-    /// 締日から何ヶ月後に支払われるか（0 = 当月、1 = 翌月）。
+    pub closing_day: Option<i64>,
+    /// 締日から何ヶ月後に支払われるか（0 = 当月、1 = 翌月）。**任意**
+    /// （同上）。
     #[sqlx(rename = "payment_month_offset")]
-    pub payment_month_offset: i64,
-    /// 支払日。1..=28 または 99（月末）。
+    pub payment_month_offset: Option<i64>,
+    /// 支払日。1..=28 または 99（月末）。**任意**（同上）。
     #[sqlx(rename = "payment_day")]
-    pub payment_day: i64,
+    pub payment_day: Option<i64>,
     pub note: Option<String>,
     #[sqlx(rename = "created_at")]
     pub created_at: String,
@@ -61,9 +68,11 @@ pub struct CustomerInput {
     pub phone: Option<String>,
     pub email: Option<String>,
     pub billing_name: Option<String>,
-    pub closing_day: i64,
-    pub payment_month_offset: i64,
-    pub payment_day: i64,
+    /// 任意（アルファ実使用からのフィードバック、2026-08-27）。`Some` の
+    /// ときだけ従来ルール（1..=28 または 99）を適用する。
+    pub closing_day: Option<i64>,
+    pub payment_month_offset: Option<i64>,
+    pub payment_day: Option<i64>,
     pub note: Option<String>,
 }
 
@@ -139,8 +148,11 @@ fn check_optional_text(
     Some(trimmed.to_string())
 }
 
-/// 締日・支払日の妥当性（1..=28 または 99）。
-fn check_day(errors: &mut Vec<FieldError>, field: &str, value: i64) {
+/// 締日・支払日の妥当性（1..=28 または 99）。**`Some` のときだけ検証する**
+/// （アルファ実使用からのフィードバックで 2026-08-27 に任意化。`None`
+/// ＝未設定は常に合法）。
+fn check_day(errors: &mut Vec<FieldError>, field: &str, value: Option<i64>) {
+    let Some(value) = value else { return };
     if !((1..=MAX_DAY_OF_MONTH).contains(&value) || value == DAY_END_OF_MONTH) {
         errors.push(FieldError {
             field: field.to_string(),
@@ -158,9 +170,9 @@ struct NormalizedCustomer {
     phone: Option<String>,
     email: Option<String>,
     billing_name: Option<String>,
-    closing_day: i64,
-    payment_month_offset: i64,
-    payment_day: i64,
+    closing_day: Option<i64>,
+    payment_month_offset: Option<i64>,
+    payment_day: Option<i64>,
     note: Option<String>,
 }
 
@@ -203,11 +215,14 @@ fn validate(input: &CustomerInput) -> Result<NormalizedCustomer, BantoError> {
 
     check_day(&mut errors, "closingDay", input.closing_day);
     check_day(&mut errors, "paymentDay", input.payment_day);
-    if !(0..=MAX_PAYMENT_MONTH_OFFSET).contains(&input.payment_month_offset) {
-        errors.push(FieldError {
-            field: "paymentMonthOffset".to_string(),
-            message: format!("0〜{MAX_PAYMENT_MONTH_OFFSET}で入力してください"),
-        });
+    // `Some` のときだけ検証する（同上。`None` ＝未設定は常に合法）。
+    if let Some(offset) = input.payment_month_offset {
+        if !(0..=MAX_PAYMENT_MONTH_OFFSET).contains(&offset) {
+            errors.push(FieldError {
+                field: "paymentMonthOffset".to_string(),
+                message: format!("0〜{MAX_PAYMENT_MONTH_OFFSET}で入力してください"),
+            });
+        }
     }
 
     if errors.is_empty() {
@@ -652,8 +667,8 @@ where
     DB: sqlx::Database,
     String: sqlx::Type<DB> + sqlx::Encode<'q, DB>,
     &'q str: sqlx::Type<DB> + sqlx::Encode<'q, DB>,
-    i64: sqlx::Type<DB> + sqlx::Encode<'q, DB>,
     Option<&'q str>: sqlx::Type<DB> + sqlx::Encode<'q, DB>,
+    Option<i64>: sqlx::Type<DB> + sqlx::Encode<'q, DB>,
 {
     query
         .bind(value.code.as_str())
@@ -736,9 +751,9 @@ mod tests {
             email: None,
             billing_name: None,
             // 月末締め・翌月末払い
-            closing_day: DAY_END_OF_MONTH,
-            payment_month_offset: 1,
-            payment_day: DAY_END_OF_MONTH,
+            closing_day: Some(DAY_END_OF_MONTH),
+            payment_month_offset: Some(1),
+            payment_day: Some(DAY_END_OF_MONTH),
             note: None,
         }
     }
@@ -897,8 +912,8 @@ mod tests {
         let svc = service().await;
         let created = svc.create(valid_input("C001")).await.expect("create");
         assert_eq!(created.code, "C001");
-        assert_eq!(created.closing_day, DAY_END_OF_MONTH);
-        assert_eq!(created.payment_month_offset, 1);
+        assert_eq!(created.closing_day, Some(DAY_END_OF_MONTH));
+        assert_eq!(created.payment_month_offset, Some(1));
         assert!(!created.created_at.is_empty());
 
         let fetched = svc.get(created.id).await.expect("get");
@@ -929,9 +944,9 @@ mod tests {
                 phone: None,
                 email: None,
                 billing_name: None,
-                closing_day: 31,
-                payment_month_offset: 99,
-                payment_day: 0,
+                closing_day: Some(31),
+                payment_month_offset: Some(99),
+                payment_day: Some(0),
                 note: None,
             })
             .await
@@ -952,15 +967,61 @@ mod tests {
         let svc = service().await;
         for (i, day) in [1_i64, 28, DAY_END_OF_MONTH].into_iter().enumerate() {
             let mut input = valid_input(&format!("OK{i}"));
-            input.closing_day = day;
+            input.closing_day = Some(day);
             svc.create(input).await.expect("valid closing day");
         }
         for (i, day) in [0_i64, 29, 31, 100].into_iter().enumerate() {
             let mut input = valid_input(&format!("NG{i}"));
-            input.closing_day = day;
+            input.closing_day = Some(day);
             let err = svc.create(input).await.expect_err("invalid closing day");
             assert_eq!(field_errors(&err)[0].0, "closingDay");
         }
+    }
+
+    /// **未設定（`None`）は合法。** アルファ実使用からのフィードバックで
+    /// 2026-08-27 に必須を撤廃した — 導入時点で支払条件が決まっていない
+    /// 顧客も登録でき、後から埋められる。
+    #[tokio::test]
+    async fn all_three_terms_can_be_left_unset() {
+        let svc = service().await;
+        let mut input = valid_input("C100");
+        input.closing_day = None;
+        input.payment_month_offset = None;
+        input.payment_day = None;
+        let created = svc.create(input).await.expect("unset terms should save");
+        assert_eq!(created.closing_day, None);
+        assert_eq!(created.payment_month_offset, None);
+        assert_eq!(created.payment_day, None);
+    }
+
+    /// 3項目のうち一部だけ設定する（後から埋めていく実務の途中状態）。
+    #[tokio::test]
+    async fn terms_can_be_set_partially() {
+        let svc = service().await;
+        let mut input = valid_input("C101");
+        input.closing_day = Some(DAY_END_OF_MONTH);
+        input.payment_month_offset = None;
+        input.payment_day = None;
+        let created = svc.create(input).await.expect("partial terms should save");
+        assert_eq!(created.closing_day, Some(DAY_END_OF_MONTH));
+        assert_eq!(created.payment_month_offset, None);
+        assert_eq!(created.payment_day, None);
+    }
+
+    /// 未設定は合法だが、**値を入れたなら**従来の値域を外れると弾く
+    /// （`None` を許すことと、`Some` の値検証を緩めることは別）。
+    #[tokio::test]
+    async fn a_set_but_invalid_term_is_still_rejected() {
+        let svc = service().await;
+        let mut input = valid_input("C102");
+        input.closing_day = None;
+        input.payment_day = None;
+        input.payment_month_offset = Some(7); // 上限6を超える
+        let err = svc
+            .create(input)
+            .await
+            .expect_err("out-of-range offset should still fail");
+        assert_eq!(field_errors(&err)[0].0, "paymentMonthOffset");
     }
 
     #[tokio::test]
@@ -986,10 +1047,10 @@ mod tests {
         let created = svc.create(valid_input("C010")).await.expect("create");
         let mut input = valid_input("C010");
         input.name = "架空商事（改称後）".to_string();
-        input.payment_month_offset = 2;
+        input.payment_month_offset = Some(2);
         let updated = svc.update(created.id, input).await.expect("update");
         assert_eq!(updated.name, "架空商事（改称後）");
-        assert_eq!(updated.payment_month_offset, 2);
+        assert_eq!(updated.payment_month_offset, Some(2));
         assert_eq!(updated.id, created.id);
     }
 

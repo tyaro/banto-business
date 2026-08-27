@@ -770,12 +770,14 @@ cancel_impl!(cancel_postgres, sqlx::Postgres, Dialect::Postgres);
 /// 候補生成で使う顧客・案件の情報。
 #[derive(Debug, Clone, sqlx::FromRow)]
 struct CustomerTerms {
+    /// 任意（アルファ実使用からのフィードバックで 2026-08-27 に必須を
+    /// 撤廃。`None` なら締日・支払期限を導出しない — `issue()` 側で扱う）。
     #[sqlx(rename = "closing_day")]
-    closing_day: i64,
+    closing_day: Option<i64>,
     #[sqlx(rename = "payment_month_offset")]
-    payment_month_offset: i64,
+    payment_month_offset: Option<i64>,
     #[sqlx(rename = "payment_day")]
-    payment_day: i64,
+    payment_day: Option<i64>,
     name: String,
     #[sqlx(rename = "billing_name")]
     billing_name: Option<String>,
@@ -1274,14 +1276,22 @@ impl InvoicesService {
         let terms = self.customer_terms(current.customer_id).await?;
         // 締日が未入力なら発行月の締日、支払期限が未入力なら締日から算出する
         // （決定 C-8）。手で入れてあればそちらを優先する。
-        let closing_on = current
-            .closing_on
-            .clone()
-            .or_else(|| derive_closing_date(&issued_on, terms.closing_day));
+        //
+        // **顧客の支払条件が未設定（`None`）なら導出せず `None` のまま
+        // 確定させる**（アルファ実使用からのフィードバック、2026-08-27）。
+        // 警告は画面側（invoices/new）が確定前に出す — サービス層は黙って
+        // 期日空欄の請求書を作る。期日が無い請求書は `CLAUDE.md` 1.5 の
+        // 導出定義よりそのまま Overdue にならない。
+        let closing_on = current.closing_on.clone().or_else(|| {
+            terms
+                .closing_day
+                .and_then(|closing_day| derive_closing_date(&issued_on, closing_day))
+        });
         let due_on = current.due_on.clone().or_else(|| {
-            closing_on.as_deref().and_then(|closing| {
-                derive_due_date(closing, terms.payment_month_offset, terms.payment_day)
-            })
+            let closing = closing_on.as_deref()?;
+            let offset = terms.payment_month_offset?;
+            let payment_day = terms.payment_day?;
+            derive_due_date(closing, offset, payment_day)
         });
 
         let sources = self.line_sources(id).await?;
@@ -1538,9 +1548,9 @@ mod tests {
                 phone: None,
                 email: None,
                 billing_name: Some("架空商事株式会社".to_string()),
-                closing_day: DAY_END_OF_MONTH,
-                payment_month_offset: 1,
-                payment_day: DAY_END_OF_MONTH,
+                closing_day: Some(DAY_END_OF_MONTH),
+                payment_month_offset: Some(1),
+                payment_day: Some(DAY_END_OF_MONTH),
                 note: None,
             })
             .await
@@ -1734,6 +1744,128 @@ mod tests {
         assert_eq!(
             derive_due_date(&closing, 1, DAY_END_OF_MONTH).as_deref(),
             Some(due.as_str())
+        );
+    }
+
+    /// **顧客の支払条件が未設定なら、確定しても支払期日を導出せず `None` の
+    /// まま確定できる**（アルファ実使用からのフィードバック、2026-08-27）。
+    /// 警告の表示は画面側（invoices/new）の責務 —— サービス層は黙って
+    /// 期日空欄の請求書を作る。締日も同様に未設定なら算出しない。
+    #[tokio::test]
+    async fn issuing_without_customer_payment_terms_leaves_the_due_date_null() {
+        let pool = migrate_memory().await.expect("migrate_memory");
+        let customers = CustomersService::new(pool.clone());
+        let customer = customers
+            .create(CustomerInput {
+                code: "C900".to_string(),
+                name: "架空工業".to_string(),
+                contact_person: None,
+                address: None,
+                phone: None,
+                email: None,
+                billing_name: None,
+                closing_day: None,
+                payment_month_offset: None,
+                payment_day: None,
+                note: None,
+            })
+            .await
+            .expect("customer with unset payment terms");
+        let projects = ProjectsService::new(pool.clone());
+        let project = projects
+            .create(ProjectInput {
+                code: String::new(),
+                customer_id: customer.id,
+                name: "架空案件".to_string(),
+                status: "IN_PROGRESS".to_string(),
+                started_on: None,
+                due_on: None,
+                estimate_amount: None,
+                contract_amount: None,
+                billing_hourly_rate: None,
+                scope: None,
+                note: None,
+            })
+            .await
+            .expect("project");
+
+        let invoices = InvoicesService::new(pool.clone());
+        let created = invoices
+            .create(draft(customer.id, vec![line(project.id, 10_000)]))
+            .await
+            .expect("create");
+        let issued = invoices
+            .issue(created.invoice.id)
+            .await
+            .expect("issuing without payment terms should still succeed");
+
+        assert_eq!(issued.invoice.status, STATUS_ISSUED);
+        assert_eq!(
+            issued.invoice.closing_on, None,
+            "締日も未設定なので算出しない"
+        );
+        assert_eq!(
+            issued.invoice.due_on, None,
+            "支払期日を導出できないので None のまま"
+        );
+
+        // 期日 NULL の請求書は、確定後も普通に取得できる（PDF・一覧が
+        // NULL 期日で壊れないことの最小確認）。
+        let fetched = invoices.get(issued.invoice.id).await.expect("get");
+        assert_eq!(fetched.invoice.due_on, None);
+    }
+
+    /// 締日だけ設定されていて支払サイト・支払日が未設定なら、締日は算出できる
+    /// が支払期日は導出できない（3項目**すべて** `Some` のときだけ導出する）。
+    #[tokio::test]
+    async fn issuing_with_only_closing_day_set_derives_closing_but_not_due() {
+        let pool = migrate_memory().await.expect("migrate_memory");
+        let customers = CustomersService::new(pool.clone());
+        let customer = customers
+            .create(CustomerInput {
+                code: "C901".to_string(),
+                name: "架空建設".to_string(),
+                contact_person: None,
+                address: None,
+                phone: None,
+                email: None,
+                billing_name: None,
+                closing_day: Some(DAY_END_OF_MONTH),
+                payment_month_offset: None,
+                payment_day: None,
+                note: None,
+            })
+            .await
+            .expect("customer with only closing_day set");
+        let projects = ProjectsService::new(pool.clone());
+        let project = projects
+            .create(ProjectInput {
+                code: String::new(),
+                customer_id: customer.id,
+                name: "架空案件".to_string(),
+                status: "IN_PROGRESS".to_string(),
+                started_on: None,
+                due_on: None,
+                estimate_amount: None,
+                contract_amount: None,
+                billing_hourly_rate: None,
+                scope: None,
+                note: None,
+            })
+            .await
+            .expect("project");
+
+        let invoices = InvoicesService::new(pool.clone());
+        let created = invoices
+            .create(draft(customer.id, vec![line(project.id, 10_000)]))
+            .await
+            .expect("create");
+        let issued = invoices.issue(created.invoice.id).await.expect("issue");
+
+        assert!(issued.invoice.closing_on.is_some(), "締日は算出できるはず");
+        assert_eq!(
+            issued.invoice.due_on, None,
+            "支払サイト・支払日が未設定なので支払期日は導出できない"
         );
     }
 

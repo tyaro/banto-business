@@ -23,7 +23,11 @@
 	import { Plus } from '@lucide/svelte';
 	import * as m from '$lib/paraglide/messages';
 	import { gridMessages, columnValidationMessages } from '$lib/banto/i18n';
-	import { customersSchema, DAY_END_OF_MONTH } from '$lib/banto/resources/customers';
+	import {
+		customersSchema,
+		DAY_END_OF_MONTH,
+		paymentMonthOffsetLabel
+	} from '$lib/banto/resources/customers';
 	import { sessionStore } from '$lib/session.svelte';
 	import { canWriteResources } from '$lib/permissions';
 	import PageHeader from '$lib/components/ui/PageHeader.svelte';
@@ -32,17 +36,23 @@
 		id: number;
 		code: string;
 		name: string;
-		closingDay: number;
-		paymentMonthOffset: number;
-		paymentDay: number;
+		closingDay: number | null;
+		paymentMonthOffset: number | null;
+		paymentDay: number | null;
 		[key: string]: unknown;
 	}
 
 	const canWrite = $derived(canWriteResources(sessionStore.role));
 
-	/** 締日・支払日の表示: 99 は「末日」と読ませる（Phase 1 決定 C-8）。 */
-	const dayFormat = (value: unknown): string =>
-		Number(value) === DAY_END_OF_MONTH ? m['customers.dayEndOfMonth']() : String(value ?? '');
+	/**
+	 * 締日・支払日の表示: 99 は「末日」と読ませる（Phase 1 決定 C-8）。
+	 * 未設定（`null`）は「—」（2026-08-27、アルファ実使用からのフィードバックで
+	 * 3項目とも任意化。設定画面と同じ記法 — `settings/+page.svelte` 参照）。
+	 */
+	const dayFormat = (value: unknown): string => {
+		if (value === null || value === undefined || value === '') return '—';
+		return Number(value) === DAY_END_OF_MONTH ? m['customers.dayEndOfMonth']() : String(value);
+	};
 
 	const baseColumns: GridColumn<CustomerRow>[] = [
 		{
@@ -62,7 +72,7 @@
 				name: { width: 240 },
 				closingDay: { width: 110, format: dayFormat },
 				paymentDay: { width: 110, format: dayFormat },
-				paymentMonthOffset: { width: 110 },
+				paymentMonthOffset: { width: 140, format: paymentMonthOffsetLabel },
 				updatedAt: { width: 130 }
 			},
 			messages: columnValidationMessages()

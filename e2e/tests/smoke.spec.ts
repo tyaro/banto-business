@@ -89,15 +89,19 @@ function rowWithText(page: Page, text: string): Locator {
 }
 
 /**
- * 顧客の新規作成フォームを埋める。締日・支払月・支払日は**必須**なので、
- * コードと名前だけでは保存できない（99 = 末日、Phase 1 決定 C-8）。
+ * 顧客の新規作成フォームを埋める。締日・支払サイト・支払日は**任意**
+ * （アルファ実使用からのフィードバックで 2026-08-27 に必須を撤廃）だが、
+ * この smoke では従来通り月末締め・翌月末払いを選んでおく（99 = 末日、
+ * Phase 1 決定 C-8）。3項目とも選択式（`type: 'number'` の手打ちから
+ * `type: 'select'` へ変更 — 同じフィードバックで「支払月」が「何月に
+ * 払うか」と誤解されたため、「支払サイト」ラベルの選択式に変えた）。
  */
 async function fillCustomerForm(page: Page, code: string, name: string): Promise<void> {
 	await page.getByLabel('顧客コード').fill(code);
 	await page.getByLabel('顧客名').fill(name);
-	await page.getByLabel('締日').fill('99');
-	await page.getByLabel('支払月').fill('1');
-	await page.getByLabel('支払日').fill('99');
+	await page.getByLabel('締日').selectOption({ label: '末日' });
+	await page.getByLabel('支払サイト（締め後）').selectOption({ label: '翌月払い' });
+	await page.getByLabel('支払日').selectOption({ label: '末日' });
 }
 
 /**
