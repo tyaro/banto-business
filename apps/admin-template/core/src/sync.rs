@@ -626,9 +626,9 @@ mod tests {
             phone: None,
             email: None,
             billing_name: None,
-            closing_day: DAY_END_OF_MONTH,
-            payment_month_offset: 1,
-            payment_day: DAY_END_OF_MONTH,
+            closing_day: Some(DAY_END_OF_MONTH),
+            payment_month_offset: Some(1),
+            payment_day: Some(DAY_END_OF_MONTH),
             note: None,
         }
     }
@@ -1038,9 +1038,9 @@ mod tests {
                         phone: None,
                         email: None,
                         billing_name: None,
-                        closing_day: DAY_END_OF_MONTH,
-                        payment_month_offset: 1,
-                        payment_day: DAY_END_OF_MONTH,
+                        closing_day: Some(DAY_END_OF_MONTH),
+                        payment_month_offset: Some(1),
+                        payment_day: Some(DAY_END_OF_MONTH),
                         note: None,
                     })
                     .await
@@ -1090,9 +1090,9 @@ mod tests {
                 phone: None,
                 email: None,
                 billing_name: None,
-                closing_day: DAY_END_OF_MONTH,
-                payment_month_offset: 1,
-                payment_day: DAY_END_OF_MONTH,
+                closing_day: Some(DAY_END_OF_MONTH),
+                payment_month_offset: Some(1),
+                payment_day: Some(DAY_END_OF_MONTH),
                 note: None,
             })
             .await

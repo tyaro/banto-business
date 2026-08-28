@@ -33,6 +33,9 @@
 		id: number;
 		code: string;
 		name: string;
+		closingDay: number | null;
+		paymentMonthOffset: number | null;
+		paymentDay: number | null;
 	}
 
 	const canWrite = $derived(canWriteResources(sessionStore.role));
@@ -135,6 +138,22 @@
 	const yen = (value: number): string => `¥${value.toLocaleString()}`;
 
 	const selectedCount = $derived(selected.filter(Boolean).length);
+
+	/**
+	 * 選択中の顧客の支払条件（締日・支払サイト・支払日）が3項目とも
+	 * 揃っているか。**警告を表示しつつ作成自体は許す**（アルファ実使用からの
+	 * フィードバック、2026-08-27）—— 期日は空欄のまま Draft を作れる。
+	 * `Invoice.status = ISSUED` 確定時に、それでも導出できなければ
+	 * `due_on` は `None` のまま（`invoices.rs::issue`）。期日 `None` の
+	 * 請求書は `CLAUDE.md` 1.5 の導出定義よりそのまま Overdue にならない。
+	 */
+	const selectedCustomer = $derived(customers.find((c) => c.id === customerId) ?? null);
+	const paymentTermsIncomplete = $derived(
+		selectedCustomer !== null &&
+			(selectedCustomer.closingDay === null ||
+				selectedCustomer.paymentMonthOffset === null ||
+				selectedCustomer.paymentDay === null)
+	);
 </script>
 
 <div class="page">
@@ -153,6 +172,9 @@
 	{:else}
 		{#if errorMessage}
 			<p class="note note--error">{errorMessage}</p>
+		{/if}
+		{#if paymentTermsIncomplete}
+			<p class="note note--warning">{m['invoices.paymentTermsUnsetWarning']()}</p>
 		{/if}
 
 		<section class="panel">
@@ -333,5 +355,9 @@
 
 	.note--error {
 		color: var(--banto-danger);
+	}
+
+	.note--warning {
+		color: var(--banto-warning);
 	}
 </style>

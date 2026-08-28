@@ -85,7 +85,11 @@
 		{
 			id: 'dueOn',
 			header: m['invoices.fieldDueOn'](),
-			accessor: (row) => row.dueOn ?? '',
+			// 支払条件が未設定の顧客の確定済み請求書は期日が NULL のままになる
+			// （アルファ実使用からのフィードバック、2026-08-27）。空欄だと
+			// 読み込み中や列ずれと区別しづらいので「—」で明示する
+			// （`customers` 一覧・PDF と同じ記法）。
+			accessor: (row) => row.dueOn ?? '—',
 			width: 120
 		},
 		{

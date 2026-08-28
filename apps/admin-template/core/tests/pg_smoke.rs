@@ -92,9 +92,9 @@ fn range_customer(code: &str, name: &str) -> CustomerInput {
         phone: None,
         email: None,
         billing_name: None,
-        closing_day: DAY_END_OF_MONTH,
-        payment_month_offset: 1,
-        payment_day: DAY_END_OF_MONTH,
+        closing_day: Some(DAY_END_OF_MONTH),
+        payment_month_offset: Some(1),
+        payment_day: Some(DAY_END_OF_MONTH),
         note: None,
     }
 }
@@ -232,9 +232,9 @@ async fn app_layer_crud_round_trips_on_postgres() {
             phone: None,
             email: None,
             billing_name: None,
-            closing_day: DAY_END_OF_MONTH,
-            payment_month_offset: 1,
-            payment_day: DAY_END_OF_MONTH,
+            closing_day: Some(DAY_END_OF_MONTH),
+            payment_month_offset: Some(1),
+            payment_day: Some(DAY_END_OF_MONTH),
             note: None,
         })
         .await
@@ -954,9 +954,9 @@ async fn sync_push_applies_and_detects_conflicts_on_postgres() {
                 phone: None,
                 email: None,
                 billing_name: None,
-                closing_day: DAY_END_OF_MONTH,
-                payment_month_offset: 1,
-                payment_day: DAY_END_OF_MONTH,
+                closing_day: Some(DAY_END_OF_MONTH),
+                payment_month_offset: Some(1),
+                payment_day: Some(DAY_END_OF_MONTH),
                 note: None,
             },
         )
@@ -1270,4 +1270,156 @@ async fn setup_status_queries_work_on_postgres() {
         .expect("setup_status after work log");
     assert!(status.work_logs_done);
     assert!(status.all_done);
+}
+
+/// **0026: 顧客の支払条件（締日・支払サイト・支払日）の NULL 許容が
+/// PostgreSQL 側でも効いていること**（アルファ実使用からのフィードバック、
+/// 2026-08-27）。0026 は SQLite 側がテーブル再作成、PostgreSQL 側は
+/// `ALTER COLUMN ... DROP NOT NULL`（本ファイル冒頭 conventions §11）—
+/// 実サーバでしか、列が本当に NULL を受け付けるかは確かめられない。
+///
+/// ついでに `payments::outstanding` の NULL 期日クエリ（`CASE WHEN ...`
+/// による NULLS LAST の明示化）も実 PostgreSQL で確認する — PostgreSQL は
+/// 元々 ASC で NULLS LAST が既定だが、方言分岐の無い同じ SQL 文字列が
+/// 両方言で意図通り動くことをここで固定する。
+#[tokio::test]
+async fn customers_payment_terms_accept_null_on_postgres() {
+    let Ok(url) = std::env::var("BANTO_TEST_PG_URL") else {
+        eprintln!("pg_smoke: BANTO_TEST_PG_URL unset - skipping (no PostgreSQL server)");
+        return;
+    };
+    // 同じ DB を共有するので直列化する（`PG_SMOKE_LOCK` の doc を参照）。
+    let _serialized = PG_SMOKE_LOCK.lock().await;
+
+    reset_schema(&url).await;
+    let db = init_db_from_target(&url)
+        .await
+        .expect("init_db_from_target should run migrations-postgres (incl. 0026)");
+
+    let customers = CustomersService::new(db.clone());
+    let with_terms = customers
+        .create(range_customer("PG-N001", "架空商事"))
+        .await
+        .expect("customer with terms");
+    let without_terms = customers
+        .create(CustomerInput {
+            code: "PG-N002".to_string(),
+            name: "架空工業".to_string(),
+            contact_person: None,
+            address: None,
+            phone: None,
+            email: None,
+            billing_name: None,
+            closing_day: None,
+            payment_month_offset: None,
+            payment_day: None,
+            note: None,
+        })
+        .await
+        .expect("closing_day/payment_month_offset/payment_day must accept NULL on postgres");
+    assert_eq!(without_terms.closing_day, None);
+    assert_eq!(without_terms.payment_month_offset, None);
+    assert_eq!(without_terms.payment_day, None);
+
+    let projects = ProjectsService::new(db.clone());
+    let project_with_terms = projects
+        .create(ProjectInput {
+            code: "PG-N-P1".to_string(),
+            customer_id: with_terms.id,
+            name: "架空案件A".to_string(),
+            status: "IN_PROGRESS".to_string(),
+            started_on: None,
+            due_on: None,
+            estimate_amount: None,
+            contract_amount: None,
+            billing_hourly_rate: None,
+            scope: None,
+            note: None,
+        })
+        .await
+        .expect("project with terms");
+    let project_without_terms = projects
+        .create(ProjectInput {
+            code: "PG-N-P2".to_string(),
+            customer_id: without_terms.id,
+            name: "架空案件B".to_string(),
+            status: "IN_PROGRESS".to_string(),
+            started_on: None,
+            due_on: None,
+            estimate_amount: None,
+            contract_amount: None,
+            billing_hourly_rate: None,
+            scope: None,
+            note: None,
+        })
+        .await
+        .expect("project without terms");
+
+    let invoices = InvoicesService::new(db.clone());
+    let issued_with_due = invoices
+        .create(InvoiceInput {
+            customer_id: with_terms.id,
+            closing_on: None,
+            due_on: None,
+            corrected_invoice_id: None,
+            note: None,
+            lines: vec![InvoiceLineInput {
+                project_id: project_with_terms.id,
+                item_name: "設計".to_string(),
+                quantity: 1,
+                unit_price: 100_000,
+                tax_category: "STANDARD_10".to_string(),
+                source_type: None,
+                source_id: None,
+                note: None,
+            }],
+        })
+        .await
+        .expect("draft with terms");
+    let issued_with_due = invoices
+        .issue(issued_with_due.invoice.id)
+        .await
+        .expect("issue with terms");
+    assert!(issued_with_due.invoice.due_on.is_some());
+
+    let issued_without_due = invoices
+        .create(InvoiceInput {
+            customer_id: without_terms.id,
+            closing_on: None,
+            due_on: None,
+            corrected_invoice_id: None,
+            note: None,
+            lines: vec![InvoiceLineInput {
+                project_id: project_without_terms.id,
+                item_name: "施工".to_string(),
+                quantity: 1,
+                unit_price: 50_000,
+                tax_category: "STANDARD_10".to_string(),
+                source_type: None,
+                source_id: None,
+                note: None,
+            }],
+        })
+        .await
+        .expect("draft without terms");
+    let issued_without_due = invoices
+        .issue(issued_without_due.invoice.id)
+        .await
+        .expect("issuing without payment terms must still succeed on postgres");
+    assert_eq!(issued_without_due.invoice.due_on, None);
+
+    // 未入金一覧: 期日 NULL でも残額があれば載り、期日ありより後ろに来る
+    // （`payments::outstanding` の NULLS LAST 明示化）。
+    let payments = PaymentsService::new(db.clone());
+    let outstanding = payments
+        .outstanding()
+        .await
+        .expect("outstanding on postgres");
+    let ids: Vec<i64> = outstanding.iter().map(|s| s.invoice_id).collect();
+    assert_eq!(
+        ids,
+        vec![issued_with_due.invoice.id, issued_without_due.invoice.id],
+        "期日ありが先、期日未設定（NULL）が末尾に来ること: {ids:?}"
+    );
+    assert!(!outstanding[1].overdue, "期日未設定は期限超過にならない");
 }
