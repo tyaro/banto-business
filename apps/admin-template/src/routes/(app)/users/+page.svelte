@@ -34,6 +34,7 @@
 	import StatusBadge, { type StatusBadgeVariant } from '$lib/components/ui/StatusBadge.svelte';
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
 	import LoadingState from '$lib/components/ui/LoadingState.svelte';
+	import PasswordInput from '$lib/components/ui/PasswordInput.svelte';
 	import {
 		createUser,
 		deleteUser,
@@ -354,15 +355,11 @@
 
 							<div class="danger-section">
 								<p class="note">{m['users.resetDesc']()}</p>
-								<label class="field">
-									{m['common.newPasswordMinLabel']()}
-									<input
-										class="banto-input"
-										type="password"
-										bind:value={resetPassword}
-										autocomplete="new-password"
-									/>
-								</label>
+								<PasswordInput
+									label={m['common.newPasswordMinLabel']()}
+									bind:value={resetPassword}
+									autocomplete="new-password"
+								/>
 								<button
 									type="button"
 									class="banto-btn banto-btn--danger"
