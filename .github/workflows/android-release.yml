@@ -154,6 +154,27 @@ jobs:
         working-directory: apps/admin-template
         run: pnpm tauri android init
 
+      # Tauri CLI のテンプレートは release buildType だけ R8/ProGuard
+      # （isMinifyEnabled = true + proguard-android-optimize.txt）を有効にするが、
+      # v0.1.0-alpha.1 で Tauri IPC だけが選択的に壊れる実機障害が出た
+      # （同一プロセスの組み込みサーバー経由では同じデータが読めた＝Rust/DB は正常。
+      #   minify されない debug APK では再現しない）。アルファは自己配布で
+      # APK サイズ増は許容できるため、minify を無効化する
+      # （docs/android-build.md「トラブルシューティング」）。
+      # `gen/android` は .gitignore 済みの生成物なので、リポジトリにファイルを
+      # 持たずここでパッチする。debug buildType はもともと minify 無効のため
+      # 置換対象は release の1箇所だけ。テンプレート側が変わって置換対象が
+      # 見つからなくなったら、黙って minify 付きでビルドせず fail させる。
+      - name: リリースビルドの minify（R8/ProGuard）を無効化
+        run: |
+          gradle=apps/admin-template/src-tauri/gen/android/app/build.gradle.kts
+          if ! grep -q 'isMinifyEnabled = true' "$gradle"; then
+            echo "::error::$gradle に 'isMinifyEnabled = true' が見つからない。Tauri CLI のテンプレートが変わった可能性があるため、minify 無効化パッチを見直すこと（docs/android-build.md）。"
+            exit 1
+          fi
+          sed -i 's/isMinifyEnabled = true/isMinifyEnabled = false/' "$gradle"
+          grep -n 'isMinifyEnabled' "$gradle"
+
       # `--debug` を付けない。`embed-ui` は android-build.yml と同じ理由
       # （スマホ母艦の実験、docs/android-build.md 4.2）。出力は unsigned の
       # release APK。

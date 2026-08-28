@@ -462,3 +462,51 @@ GitHub の画面から行う）。
 
 「secrets 欠けている」は4つのうち1つでも未設定なら該当する（部分的に
 設定されている状態は事故として扱う）。
+
+### 8.7 トラブルシューティング
+
+#### v0.1.0-alpha.1: release APK で一覧読み取りだけ失敗する
+
+**症状:** Pixel 10 Fold に入れた v0.1.0-alpha.1 の署名済み release APK で、
+一覧を読み取る Tauri IPC コマンド（原価レート画面、クイック入力の作業分類
+一覧 `work_categories_list` 等）だけが「読み込みに失敗しました」になる。
+ログイン（認証コマンド）や設定画面の表示は動いていた。
+
+**切り分け:** 同じ APK プロセスが動かしている組み込み LAN サーバー
+（`http://<端末>:8721`、4.2 節の `embed-ui`）へ端末のブラウザから直接
+アクセスすると、同じデータが正常に読める。これにより
+
+- Rust 側のロジック・SQLite の DB・データそのものは正常
+- 障害は WebView ↔ Kotlin の Tauri IPC ブリッジに限定される
+
+ことが分かる。また `android-build.yml` が作る `--debug` ビルドでは再現
+しない。
+
+**原因（推定）:** Tauri CLI（2.11.4）が `tauri android init` で生成する
+`gen/android/app/build.gradle.kts` は、**release buildType のみ**
+`isMinifyEnabled = true` と `getDefaultProguardFile("proguard-android-optimize.txt")`
+（R8 最適化）を有効にしている。アプリ側の `proguard-rules.pro` に対応する
+keep ルールは無く実質空のため、R8 が Tauri IPC ブリッジの一部クラス・
+メソッドを最適化・除去し、一覧読み取り経路だけが選択的に壊れていると
+見ている。「debug では動くが release の Android だけ壊れ、minify を
+無効化すると直る」は Tauri で知られたパターンで、今回の症状と一致する。
+
+**対処:** `android-release.yml` に、`tauri android init` 直後
+（release APK のビルド前）で `gen/android/app/build.gradle.kts` の
+`isMinifyEnabled = true` を `isMinifyEnabled = false` へ置き換えるステップ
+を追加した（v0.1.0-alpha.2〜）。`gen/android` は 4.1 / 7.4 節のとおり
+`.gitignore` 済みの生成物で CI が毎回作り直すため、**ワークフロー内で
+init 直後にパッチを当てるのが唯一の介入点**であり、リポジトリに
+`gen/android` を持ち込む判断はしていない。
+
+置換対象の文字列が見つからない場合（Tauri CLI のテンプレートが変わった
+場合）は、minify が有効なまま黙ってビルドを続けず、そのステップを fail
+させる設計にしてある。
+
+アルファは自己配布（ストアを経由せず自分の端末へ直接入れる）なので、
+minify を無効化した分の APK サイズ増は許容している。
+
+**将来:** minify（R8/ProGuard）を再度有効化するなら、Tauri および使用
+している plugin 向けの keep ルール（`proguard-rules.pro`）を先に整備する
+ことが前提になる。アルファの間はサイズ増を許容して無効のままとし、この
+対応はしない。
