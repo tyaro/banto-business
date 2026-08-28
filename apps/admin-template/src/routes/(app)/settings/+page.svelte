@@ -23,6 +23,7 @@
 	import { getLocale, locales, setLocale, type Locale } from '$lib/paraglide/runtime';
 	import PageHeader from '$lib/components/ui/PageHeader.svelte';
 	import SurfaceCard from '$lib/components/ui/SurfaceCard.svelte';
+	import PasswordInput from '$lib/components/ui/PasswordInput.svelte';
 	import { settings } from '$lib/settings.svelte';
 	import { isTauri } from '$lib/banto/setup';
 	import { applyServerSettings, getServerStatus, type ServerStatus } from '$lib/banto/serverAdmin';
@@ -829,15 +830,11 @@
 									autocomplete="username"
 								/>
 							</label>
-							<label class="field">
-								{m['common.password']()}
-								<input
-									class="banto-input"
-									type="password"
-									bind:value={autologinPassword}
-									autocomplete="current-password"
-								/>
-							</label>
+							<PasswordInput
+								label={m['common.password']()}
+								bind:value={autologinPassword}
+								autocomplete="current-password"
+							/>
 							<button
 								type="submit"
 								class="banto-btn banto-btn--primary"
@@ -1144,33 +1141,21 @@
 						</p>
 					{:else if changePassword}
 						<form onsubmit={submitChangePassword}>
-							<label class="field">
-								{m['settings.currentPassword']()}
-								<input
-									class="banto-input"
-									type="password"
-									bind:value={currentPassword}
-									autocomplete="current-password"
-								/>
-							</label>
-							<label class="field">
-								{m['common.newPasswordMinLabel']()}
-								<input
-									class="banto-input"
-									type="password"
-									bind:value={newPassword}
-									autocomplete="new-password"
-								/>
-							</label>
-							<label class="field">
-								{m['settings.newPasswordConfirm']()}
-								<input
-									class="banto-input"
-									type="password"
-									bind:value={newPasswordConfirm}
-									autocomplete="new-password"
-								/>
-							</label>
+							<PasswordInput
+								label={m['settings.currentPassword']()}
+								bind:value={currentPassword}
+								autocomplete="current-password"
+							/>
+							<PasswordInput
+								label={m['common.newPasswordMinLabel']()}
+								bind:value={newPassword}
+								autocomplete="new-password"
+							/>
+							<PasswordInput
+								label={m['settings.newPasswordConfirm']()}
+								bind:value={newPasswordConfirm}
+								autocomplete="new-password"
+							/>
 
 							{#if passwordError}
 								<p class="error">{passwordError}</p>

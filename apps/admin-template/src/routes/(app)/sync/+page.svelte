@@ -46,6 +46,7 @@
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
 	import ErrorState from '$lib/components/ui/ErrorState.svelte';
 	import LoadingState from '$lib/components/ui/LoadingState.svelte';
+	import PasswordInput from '$lib/components/ui/PasswordInput.svelte';
 
 	const isAdmin = $derived(sessionStore.role === 'admin');
 	const available = isSyncAvailable();
@@ -215,11 +216,10 @@
 				<p class="note note--muted">{m['sync.configureFirst']()}</p>
 			{:else}
 				{#if !settings.hasPassword}
-					<label class="field">
-						<span>{m['sync.fieldPassword']()}</span>
-						<input class="banto-input" type="password" bind:value={password} />
+					<div class="field">
+						<PasswordInput label={m['sync.fieldPassword']()} bind:value={password} />
 						<small>{m['sync.passwordHint']()}</small>
-					</label>
+					</div>
 				{/if}
 
 				<div class="actions">

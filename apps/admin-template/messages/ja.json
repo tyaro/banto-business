@@ -79,6 +79,8 @@
   "auth.passwordMismatch": "パスワードが一致しません",
   "auth.setupUnsupported": "この環境では初期セットアップに対応していません",
   "auth.setupFailed": "セットアップに失敗しました",
+  "auth.showPassword": "入力内容を表示",
+  "auth.hidePassword": "入力内容を隠す",
   "settings.pageDescription": "テーマ、LANアクセス、バックアップなど、この端末の動作を設定します。",
   "settings.themeHeading": "テーマ",
   "settings.themeDesc": "配色モード・プリセット・表示密度を切り替えます。",

@@ -79,6 +79,8 @@
   "auth.passwordMismatch": "The passwords do not match",
   "auth.setupUnsupported": "This environment does not support initial setup",
   "auth.setupFailed": "Setup failed",
+  "auth.showPassword": "Show input",
+  "auth.hidePassword": "Hide input",
   "settings.pageDescription": "Configure this device's behavior: theme, LAN access, backups, and more.",
   "settings.themeHeading": "Theme",
   "settings.themeDesc": "Switch the color mode, preset, and display density.",

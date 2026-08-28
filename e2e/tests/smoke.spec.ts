@@ -175,7 +175,19 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(page).toHaveURL(/\/login$/);
 
 		await page.getByLabel('ユーザー名').fill(ADMIN_USERNAME);
-		await page.getByLabel('パスワード').fill(ADMIN_PASSWORD);
+		const passwordField = page.getByLabel('パスワード');
+		await passwordField.fill(ADMIN_PASSWORD);
+
+		// アルファ実機フィードバック: パスワード表示/非表示トグル
+		// (PasswordInput.svelte)。既存ロケータ互換の確認を兼ねて、押すと
+		// input の type が text に変わることだけ確認する（押し直しの検証は
+		// 不要）。ボタンの aria-label はあえて「パスワード」を含まない文言
+		// （auth.showPassword = 「入力内容を表示」）にしてある - 含めると
+		// bare `getByLabel('パスワード')`（このファイルの他の箇所で多用）が
+		// 入力欄とボタンの2件にヒットして strict mode 違反になるため。
+		await page.getByRole('button', { name: '入力内容を表示' }).click();
+		await expect(passwordField).toHaveAttribute('type', 'text');
+
 		await page.getByRole('button', { name: 'ログイン' }).click();
 
 		// P1-1: ログイン後は「前回開いていた画面」へ戻る。ここまで admin が

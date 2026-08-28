@@ -6,6 +6,7 @@
 	import { bantoReady, getBantoMode } from '$lib/banto/setup';
 	import { lastVisitedPath } from '$lib/banto/lastVisited';
 	import SurfaceCard from '$lib/components/ui/SurfaceCard.svelte';
+	import PasswordInput from '$lib/components/ui/PasswordInput.svelte';
 
 	// Undecided until `status()` resolves (or is absent, treated as
 	// "already initialized" - see below): render nothing rather than
@@ -140,25 +141,17 @@
 						<input class="banto-input" type="text" bind:value={username} autocomplete="username" />
 					</label>
 
-					<label>
-						{m['common.passwordMinLabel']()}
-						<input
-							class="banto-input"
-							type="password"
-							bind:value={password}
-							autocomplete="new-password"
-						/>
-					</label>
+					<PasswordInput
+						label={m['common.passwordMinLabel']()}
+						bind:value={password}
+						autocomplete="new-password"
+					/>
 
-					<label>
-						{m['auth.passwordConfirmLabel']()}
-						<input
-							class="banto-input"
-							type="password"
-							bind:value={passwordConfirm}
-							autocomplete="new-password"
-						/>
-					</label>
+					<PasswordInput
+						label={m['auth.passwordConfirmLabel']()}
+						bind:value={passwordConfirm}
+						autocomplete="new-password"
+					/>
 
 					{#if error}
 						<p class="error">{error}</p>
@@ -180,15 +173,11 @@
 						<input class="banto-input" type="text" bind:value={username} autocomplete="username" />
 					</label>
 
-					<label>
-						{m['common.password']()}
-						<input
-							class="banto-input"
-							type="password"
-							bind:value={password}
-							autocomplete="current-password"
-						/>
-					</label>
+					<PasswordInput
+						label={m['common.password']()}
+						bind:value={password}
+						autocomplete="current-password"
+					/>
 
 					{#if showRemember}
 						<label class="remember">
