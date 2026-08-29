@@ -1044,16 +1044,15 @@ async fn router_with_role_tokens_and_backup() -> (Router, tempfile::TempDir, Str
 {
     let dir = tempdir().expect("tempdir");
     let db_path = dir.path().join("admin-template.sqlite3");
-    let pool = banto_storage::connect_sqlite(&db_path)
-        .await
-        .expect("connect_sqlite");
-    sqlx::migrate!("./migrations-sqlite")
-        .run(&pool)
-        .await
-        .expect("migrate");
-    // V2 PR2: services take a backend-agnostic `Db`; wrap the on-disk SQLite
-    // pool (a real file is required here so `VACUUM INTO` actually writes).
-    let db = banto_storage::Db::Sqlite(pool);
+    // V2 PR2: services take a backend-agnostic `Db`; a real on-disk SQLite
+    // file is required here so `VACUUM INTO` actually writes. Goes through
+    // `crate::db::init_db` (not a bare `connect_sqlite` +
+    // `sqlx::migrate!().run()`) so migrations run via the same
+    // `run_sqlite_migrations` the real app uses — that function is required
+    // for the `-- no-transaction` migrations (`db.rs` doc comment on
+    // `run_sqlite_migrations` explains why sqlx-sqlite can't run them
+    // through a bare `Migrator::run()`).
+    let db = crate::db::init_db(&db_path).await.expect("init_db");
     let customers = CustomersService::new(db.clone());
     let projects = ProjectsService::new(db.clone());
     let masters = MastersService::new(db.clone());
