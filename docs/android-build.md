@@ -510,3 +510,31 @@ minify を無効化した分の APK サイズ増は許容している。
 している plugin 向けの keep ルール（`proguard-rules.pro`）を先に整備する
 ことが前提になる。アルファの間はサイズ増を許容して無効のままとし、この
 対応はしない。
+
+#### v0.1.0-alpha.2: データ入りDBで起動即クラッシュする
+
+**症状:** v0.1.0-alpha.2 の APK を alpha.1 利用中の実機（顧客・案件の
+実データ入りDB）へ上書きインストールすると、起動直後に落ちる。
+新規インストール（空DB）や CI・E2E では発生しない。
+
+**原因（再現確認済み）:** alpha.2 に入ったマイグレーション
+`0026_customers_payment_terms_optional.sql`（初版）が、`PRAGMA
+foreign_keys` は無効という誤った前提で customers テーブルを
+`DROP TABLE` を含む再作成で書き換えていた。実際には同梱 Banto の
+`banto-storage` が SQLite 接続で `foreign_keys(true)` を有効化しており、
+customers を参照する行（projects 等）が1件でもあると `DROP TABLE` が
+`FOREIGN KEY constraint failed` で失敗する。起動時マイグレーションの
+失敗＝クラッシュ。空DBでは参照行が無いため素通りし、検証をすり抜けた。
+
+**対処（v0.1.0-alpha.3〜）:** 0026 を SQLite 公式のテーブル再作成手順
+（`PRAGMA foreign_keys=OFF` → 再作成 → ON、`-- no-transaction` 指令）へ
+書き換えた。sqlx-sqlite（0.8.6）は `-- no-transaction` を解釈しないため、
+`core/src/db.rs` の `run_sqlite_migrations` がこの種のマイグレーション
+だけをトランザクション外で適用する。詳細は同関数の doc コメントと 0026
+冒頭のコメントを参照。再発防止として「データ入りDBに対するマイグレー
+ション通過」の回帰テスト
+（`db::tests::migration_0026_survives_a_populated_database`）を追加した。
+
+失敗したマイグレーションはロールバックされるため、**実機のDBは無傷**。
+alpha.2 で落ちた端末も alpha.3 を入れれば次回起動時に修正版 0026 が
+適用され、そのまま使える（応急処置としては alpha.1 に戻しても動く）。

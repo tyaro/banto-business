@@ -1,3 +1,18 @@
+-- no-transaction
+-- ↑ sqlx への指令。banto-storage は SQLite 接続で PRAGMA foreign_keys=ON に
+--   しており（crates/banto-storage/src/sqlite.rs）、FK 有効のまま下の
+--   DROP TABLE customers を行うと、projects 等の子テーブルに参照行がある
+--   DB（=実運用DB）では FOREIGN KEY constraint failed で失敗する。
+--   PRAGMA foreign_keys はトランザクション内では no-op のため、sqlx の
+--   トランザクションから外し、このファイル内で明示的に
+--   OFF → BEGIN…COMMIT → ON する（SQLite 公式のテーブル再作成手順）。
+--
+-- 【履歴】初版はこの点を見落とし「FK は有効化していない」と誤認したまま
+-- リリースされ、v0.1.0-alpha.2 がデータ入りDBで起動時に即クラッシュした。
+-- 適用成功した実DBが存在しない段階だったため、CLAUDE.md 第5章の例外として
+-- 2026-08-29 に本修正版へ書き換えた（ユーザー承認済み）。空DBで初版が
+-- 適用済みの開発用DBはチェックサム不一致になるので作り直すこと。
+--
 -- アルファ実使用からのフィードバック（2026-08-27）: 顧客の締日・支払サイト・
 -- 支払日を任意化する。導入時点で全部揃っていなくても顧客を登録でき、後から
 -- 埋められるようにする（0007_customers.sql の NOT NULL を撤去）。
@@ -18,12 +33,15 @@
 --   - トリガー sync_outbox_customers_insert / _update（0024）: テーブルを
 --     DROP すると SQLite が自動的に道連れで削除するので、リネーム後に
 --     同一定義で再作成する
---   - customers 自体には INDEX は無い（子テーブル側の FK 参照
---     customer_id は projects/invoices/payments にあるが、これらは
---     `REFERENCES customers(id)` の宣言のみで SQLite の
---     `PRAGMA foreign_keys` は本リポジトリで有効化していないため
---     （customers.rs delete() のコメント参照）、customers 側の
---     DROP/RENAME に対して外部キー起因のエラーは発生しない
+--
+-- 途中で kill された場合の再実行も冪等: customers_new は RENAME 済みで
+-- 存在せず、トリガーは DROP TABLE で customers と一緒に削除されているため、
+-- このファイルを最初から再実行しても壊れない。
+
+PRAGMA foreign_keys = OFF;
+
+BEGIN;
+
 CREATE TABLE customers_new (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     code TEXT NOT NULL UNIQUE,
@@ -77,3 +95,7 @@ BEGIN
         datetime('now')
     );
 END;
+
+COMMIT;
+
+PRAGMA foreign_keys = ON;
