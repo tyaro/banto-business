@@ -20,7 +20,7 @@
 	 * | 日付 | 入力 | 今日が既定（変えられる） |
 	 * | 案件 | 選ぶ | **前回の値を覚えている** |
 	 * | 作業分類 | コードを手打ち | 選ぶ（前回の値を覚えている） |
-	 * | 時間 | 分を入力 | よく使う長さを押す or 分を入力 |
+	 * | 時間 | 分を入力 | よく使う長さを押す or 時間を入力 |
 	 * | 適用レート | 入力 | **出さない**（空欄＝分類の既定。要件 F-W2） |
 	 * | 請求済み | 入力 | **出さない**（新規は必ず未請求） |
 	 *
@@ -32,6 +32,16 @@
 	 * 続けて入れることが多い（午前の作業と午後の作業など）。案件と分類は
 	 * 残し、時間とメモだけ空にする。今日の合計を出して、入れ忘れと二重入力に
 	 * 気付けるようにする。
+	 *
+	 * ## 時間単位（アルファ実機フィードバック、2026-08-30）
+	 *
+	 * 分入力は実機で「1件あたり8時間なら480と打つ」桁数の多さが不評だった。
+	 * ここだけ時間単位（0.5時間刻み、既定8時間）に変え、保存時に
+	 * `minutes = Math.round(hours * 60)` で分へ変換してから通常の
+	 * WorkLog 作成に渡す。**DB・サーバ・通常の工数入力フォームは分単位の
+	 * ままで変更しない** — ここは入力UIだけの話で、保存先のスキーマは
+	 * 従来通り。0.5刻みでない値（丸め誤差を含む）は `hours * 2` が整数か
+	 * どうかで検出し、保存前に弾く。
 	 */
 	import * as m from '$lib/paraglide/messages';
 	import { getDataProvider, isProviderError, type ListParams } from '@banto/admin-core';
@@ -47,8 +57,8 @@
 	const LAST_PROJECT_KEY = 'quick.lastProjectId';
 	const LAST_CATEGORY_KEY = 'quick.lastWorkCategory';
 
-	/** よく使う長さ。30分刻みで、半日・1日は押し間違えが怖いので入れない。 */
-	const MINUTE_PRESETS = [30, 60, 90, 120, 180, 240];
+	/** よく使う長さ（時間）。既定値の8時間（1日分）まで、0.5時間刻みで並べる。 */
+	const HOUR_PRESETS = [0.5, 1, 1.5, 2, 3, 4, 8];
 
 	interface WorkCategory {
 		code: string;
@@ -70,7 +80,8 @@
 	let projectId = $state<number | null>(null);
 	let workCategoryCode = $state('');
 	let workedOn = $state(today);
-	let minutes = $state<number | null>(null);
+	/** 時間単位、0.5時間刻み。既定8時間（画面上部の doc 参照）。 */
+	let hours = $state<number>(8);
 	let description = $state('');
 
 	let saving = $state(false);
@@ -144,9 +155,22 @@
 		return (total / 60).toFixed(1);
 	}
 
+	/**
+	 * 0.5時間刻み・0.5〜24時間の範囲かを保存前に検査する（サーバ側の
+	 * 1..1440分の範囲と整合させるための上下限）。`hours * 2` が整数でない
+	 * ものは0.5刻みから外れている（丸め誤差の混入含む）。
+	 */
+	function hoursValid(value: number): boolean {
+		return Number.isFinite(value) && value >= 0.5 && value <= 24 && Number.isInteger(value * 2);
+	}
+
 	async function save() {
-		if (projectId === null || workCategoryCode === '' || !minutes || minutes <= 0) {
+		if (projectId === null || workCategoryCode === '') {
 			errorMessage = m['quick.incomplete']();
+			return;
+		}
+		if (!hoursValid(hours)) {
+			errorMessage = m['quick.invalidHours']();
 			return;
 		}
 		saving = true;
@@ -156,7 +180,7 @@
 				projectId,
 				workedOn,
 				workCategoryCode,
-				minutes,
+				minutes: Math.round(hours * 60),
 				// 空欄なら作業分類の既定レートをサーバが引く（要件 F-W2）。
 				appliedRate: null,
 				description: description === '' ? null : description,
@@ -164,8 +188,9 @@
 			});
 			savedCount = savedCount + 1;
 
-			// 続けて入れる前提で、案件と分類は残す。
-			minutes = null;
+			// 続けて入れる前提で、案件と分類は残す。時間は既定の8時間へ戻し、
+			// メモだけ空にする。
+			hours = 8;
 			description = '';
 			await rememberLastUsed();
 			await refreshTodayTotal();
@@ -230,20 +255,27 @@
 			</label>
 
 			<div class="field">
-				<span>{m['workLogs.fieldMinutes']()}</span>
+				<span>{m['quick.fieldHours']()}</span>
 				<div class="presets">
-					{#each MINUTE_PRESETS as preset (preset)}
+					{#each HOUR_PRESETS as preset (preset)}
 						<button
 							type="button"
 							class="banto-btn preset"
-							class:preset--on={minutes === preset}
-							onclick={() => (minutes = preset)}
+							class:preset--on={hours === preset}
+							onclick={() => (hours = preset)}
 						>
-							{m['quick.minutesPreset']({ minutes: preset })}
+							{m['quick.hoursPreset']({ hours: preset })}
 						</button>
 					{/each}
 				</div>
-				<input class="banto-input" type="number" min="1" max="1440" bind:value={minutes} />
+				<input
+					class="banto-input"
+					type="number"
+					step="0.5"
+					min="0.5"
+					max="24"
+					bind:value={hours}
+				/>
 			</div>
 
 			<label class="field">

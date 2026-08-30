@@ -24,7 +24,7 @@ use crate::issuer::{IssuerService, IssuerSettings};
 use crate::profitability::taxable_amount;
 use crate::tax::{calculate_tax, RoundingMode, TaxCategory, TaxLine, TaxSummary};
 use banto_admin_services::settings::SettingsService;
-use banto_core::{BantoError, FieldError, ListParams, ListResult};
+use banto_core::{BantoError, FieldError, FilterOp, FilterState, ListParams, ListResult};
 use banto_server::ServerEvent;
 use banto_storage::{ColumnMap, Db, Dialect};
 use serde::{Deserialize, Serialize};
@@ -860,13 +860,90 @@ impl InvoicesService {
         }
     }
 
+    /// `projectId` での絞り込み（アルファ実機フィードバック）。
+    ///
+    /// `Invoice` は `project_id` を持たない（`CLAUDE.md` 1.3 — 1請求書に
+    /// 複数案件、1案件に複数請求書の両方が実務で起きるため）。案件は
+    /// `InvoiceLine.project_id` にしかないので、「その案件の明細を1行でも
+    /// 含む請求書」を `EXISTS (SELECT 1 FROM invoice_lines ...)` で絞る。
+    ///
+    /// `projectId` は `invoices` の実カラムではないため `column_map()` /
+    /// 通常のフィルタ経路（`append_where`）には乗せられない。そこで
+    /// `list()` の入口で `params.filters` から事前に抜き出し（残りは従来
+    /// どおり `column_map()` 経由のフィルタとして扱う）、ベース SQL を
+    /// `(SELECT * FROM invoices WHERE EXISTS (...)) AS invoices` という
+    /// 派生テーブルに置き換える。派生テーブルで包む理由は、
+    /// `banto_storage::list_query::{sqlite,postgres}::append_where` が
+    /// 自前で `" WHERE "` から書き始めるため、ベース SQL 側にも `WHERE` を
+    /// 足すと衝突すること。`AS invoices` で元の名前のまま別名を付けるので、
+    /// 残りのフィルタ・`ORDER BY` は無修飾のカラム名のままで解決できる。
+    ///
+    /// 許可するのは「単一の `eq` 条件・整数として解釈できる値」のみ
+    /// （グリッド由来の等価フィルタ相当）。複数指定・`eq` 以外の演算子・
+    /// 非整数値は `BantoError::BadRequest` にする。
+    fn extract_project_id_filter(
+        filters: &mut Vec<FilterState>,
+    ) -> Result<Option<i64>, BantoError> {
+        const ERROR_MESSAGE: &str = "projectId filter supports a single eq condition";
+        let mut project_id: Option<i64> = None;
+        let mut remaining = Vec::with_capacity(filters.len());
+        for filter in filters.drain(..) {
+            if filter.field != "projectId" {
+                remaining.push(filter);
+                continue;
+            }
+            if project_id.is_some() || !matches!(filter.op, FilterOp::Eq) {
+                return Err(BantoError::BadRequest(ERROR_MESSAGE.to_string()));
+            }
+            let id = filter
+                .value
+                .as_i64()
+                .or_else(|| {
+                    filter
+                        .value
+                        .as_f64()
+                        .filter(|f| f.is_finite() && f.fract() == 0.0)
+                        .map(|f| f as i64)
+                })
+                .ok_or_else(|| BantoError::BadRequest(ERROR_MESSAGE.to_string()))?;
+            project_id = Some(id);
+        }
+        *filters = remaining;
+        Ok(project_id)
+    }
+
     pub async fn list(&self, params: ListParams) -> Result<ListResult<Invoice>, BantoError> {
         let columns = column_map();
-        let select_rows = format!("SELECT {COLUMNS} FROM invoices");
-        let select_count = "SELECT COUNT(*) FROM invoices".to_string();
+        let mut params = params;
+        let project_id = Self::extract_project_id_filter(&mut params.filters)?;
+
+        // `WHERE` を書き始める `append_where` と衝突しないよう、`projectId`
+        // 絞り込みは派生テーブルとしてベース SQL に組み込む（上の doc
+        // コメント参照）。値は必ず `push_bind` で束縛し、文字列直埋めはしない。
+        macro_rules! push_invoices_source {
+            ($builder:expr) => {
+                match project_id {
+                    None => {
+                        $builder.push("invoices");
+                    }
+                    Some(id) => {
+                        $builder.push(
+                            "(SELECT * FROM invoices WHERE EXISTS (SELECT 1 FROM \
+                             invoice_lines WHERE invoice_lines.invoice_id = invoices.id \
+                             AND invoice_lines.project_id = ",
+                        );
+                        $builder.push_bind(id);
+                        $builder.push(")) AS invoices");
+                    }
+                }
+            };
+        }
+
         match &self.db {
             Db::Sqlite(pool) => {
-                let mut rows_builder: QueryBuilder<'_, Sqlite> = QueryBuilder::new(&select_rows);
+                let mut rows_builder: QueryBuilder<'_, Sqlite> =
+                    QueryBuilder::new(format!("SELECT {COLUMNS} FROM "));
+                push_invoices_source!(rows_builder);
                 banto_storage::list_query::sqlite::apply_list_params(
                     &mut rows_builder,
                     &columns,
@@ -878,7 +955,9 @@ impl InvoicesService {
                     .await
                     .map_err(banto_storage::storage_error)?;
 
-                let mut count_builder: QueryBuilder<'_, Sqlite> = QueryBuilder::new(&select_count);
+                let mut count_builder: QueryBuilder<'_, Sqlite> =
+                    QueryBuilder::new("SELECT COUNT(*) FROM ");
+                push_invoices_source!(count_builder);
                 banto_storage::list_query::sqlite::append_where(
                     &mut count_builder,
                     &columns,
@@ -897,7 +976,8 @@ impl InvoicesService {
             #[cfg(feature = "postgres")]
             Db::Postgres(pool) => {
                 let mut rows_builder: QueryBuilder<'_, sqlx::Postgres> =
-                    QueryBuilder::new(&select_rows);
+                    QueryBuilder::new(format!("SELECT {COLUMNS} FROM "));
+                push_invoices_source!(rows_builder);
                 banto_storage::list_query::postgres::apply_list_params(
                     &mut rows_builder,
                     &columns,
@@ -910,7 +990,8 @@ impl InvoicesService {
                     .map_err(banto_storage::storage_error)?;
 
                 let mut count_builder: QueryBuilder<'_, sqlx::Postgres> =
-                    QueryBuilder::new(&select_count);
+                    QueryBuilder::new("SELECT COUNT(*) FROM ");
+                push_invoices_source!(count_builder);
                 banto_storage::list_query::postgres::append_where(
                     &mut count_builder,
                     &columns,
@@ -2346,5 +2427,242 @@ mod tests {
         assert_eq!(issued.invoice.total_taxable, 66_665);
         // 6,666.5 → 6,666（ゼロ方向切捨て）
         assert_eq!(issued.invoice.total_tax, 6_666);
+    }
+
+    // --- projectId 擬似フィルタ（アルファ実機フィードバック） ---
+
+    struct ProjectFilterFixture {
+        invoices: InvoicesService,
+        project_a: i64,
+        project_b: i64,
+        /// 案件Aのみの明細を持つ請求書。
+        invoice_a: i64,
+        /// 案件Bのみの明細を持つ請求書。
+        invoice_b: i64,
+        /// 案件A・Bの両方の明細を持つ請求書。
+        invoice_ab: i64,
+    }
+
+    /// 同一顧客に架空案件A・Bの2件。請求書は「Aのみ」「Bのみ」
+    /// 「A+B両方」の3件（`CLAUDE.md` 1.3 が言う「1請求書に複数案件」の形）。
+    async fn project_filter_fixture() -> ProjectFilterFixture {
+        let pool = migrate_memory().await.expect("migrate_memory");
+        let customers = CustomersService::new(pool.clone());
+        let customer = customers
+            .create(CustomerInput {
+                code: "C002".to_string(),
+                name: "架空物産".to_string(),
+                contact_person: None,
+                address: None,
+                phone: None,
+                email: None,
+                billing_name: None,
+                closing_day: Some(DAY_END_OF_MONTH),
+                payment_month_offset: Some(1),
+                payment_day: Some(DAY_END_OF_MONTH),
+                note: None,
+            })
+            .await
+            .expect("customer");
+        let projects = ProjectsService::new(pool.clone());
+        let project_a = projects
+            .create(ProjectInput {
+                code: String::new(),
+                customer_id: customer.id,
+                name: "架空案件A".to_string(),
+                status: "IN_PROGRESS".to_string(),
+                started_on: None,
+                due_on: None,
+                estimate_amount: None,
+                contract_amount: None,
+                billing_hourly_rate: None,
+                scope: None,
+                note: None,
+            })
+            .await
+            .expect("project a");
+        let project_b = projects
+            .create(ProjectInput {
+                code: String::new(),
+                customer_id: customer.id,
+                name: "架空案件B".to_string(),
+                status: "IN_PROGRESS".to_string(),
+                started_on: None,
+                due_on: None,
+                estimate_amount: None,
+                contract_amount: None,
+                billing_hourly_rate: None,
+                scope: None,
+                note: None,
+            })
+            .await
+            .expect("project b");
+
+        let invoices = InvoicesService::new(pool.clone());
+        let invoice_a = invoices
+            .create(draft(customer.id, vec![line(project_a.id, 10_000)]))
+            .await
+            .expect("invoice a only");
+        let invoice_b = invoices
+            .create(draft(customer.id, vec![line(project_b.id, 20_000)]))
+            .await
+            .expect("invoice b only");
+        let invoice_ab = invoices
+            .create(draft(
+                customer.id,
+                vec![line(project_a.id, 5_000), line(project_b.id, 7_000)],
+            ))
+            .await
+            .expect("invoice a+b");
+
+        ProjectFilterFixture {
+            invoices,
+            project_a: project_a.id,
+            project_b: project_b.id,
+            invoice_a: invoice_a.invoice.id,
+            invoice_b: invoice_b.invoice.id,
+            invoice_ab: invoice_ab.invoice.id,
+        }
+    }
+
+    fn project_id_filter(project_id: i64) -> FilterState {
+        FilterState {
+            field: "projectId".to_string(),
+            op: FilterOp::Eq,
+            value: serde_json::json!(project_id),
+        }
+    }
+
+    /// フィルタ無しなら従来どおり全件（回帰確認）。
+    #[tokio::test]
+    async fn list_without_project_filter_returns_every_invoice() {
+        let f = project_filter_fixture().await;
+        let result = f.invoices.list(ListParams::default()).await.expect("list");
+        assert_eq!(result.total_count, 3);
+        assert_eq!(result.rows.len(), 3);
+    }
+
+    /// 案件Aで絞ると「Aのみ」と「A+B」の2件（Bのみは含まれない）。
+    #[tokio::test]
+    async fn project_filter_matches_invoices_with_at_least_one_line_for_the_project() {
+        let f = project_filter_fixture().await;
+        let params = ListParams {
+            filters: vec![project_id_filter(f.project_a)],
+            ..Default::default()
+        };
+        let result = f.invoices.list(params).await.expect("list");
+        assert_eq!(result.total_count, 2);
+        let mut ids: Vec<i64> = result.rows.iter().map(|row| row.id).collect();
+        ids.sort();
+        let mut expected = vec![f.invoice_a, f.invoice_ab];
+        expected.sort();
+        assert_eq!(ids, expected);
+    }
+
+    /// 案件Bで絞っても対称に2件（「Bのみ」と「A+B」）。
+    #[tokio::test]
+    async fn project_filter_works_symmetrically_for_the_other_project() {
+        let f = project_filter_fixture().await;
+        let params = ListParams {
+            filters: vec![project_id_filter(f.project_b)],
+            ..Default::default()
+        };
+        let result = f.invoices.list(params).await.expect("list");
+        assert_eq!(result.total_count, 2);
+        let mut ids: Vec<i64> = result.rows.iter().map(|row| row.id).collect();
+        ids.sort();
+        let mut expected = vec![f.invoice_b, f.invoice_ab];
+        expected.sort();
+        assert_eq!(ids, expected);
+    }
+
+    /// 存在しない案件 id なら0件（未知の案件を選んでも一覧が壊れない）。
+    #[tokio::test]
+    async fn project_filter_with_unknown_project_id_returns_nothing() {
+        let f = project_filter_fixture().await;
+        let params = ListParams {
+            filters: vec![project_id_filter(999_999)],
+            ..Default::default()
+        };
+        let result = f.invoices.list(params).await.expect("list");
+        assert_eq!(result.total_count, 0);
+        assert!(result.rows.is_empty());
+    }
+
+    /// `projectId` と通常フィルタ（`status`）を併用しても両方効く。
+    /// Draft のまま作った請求書だけなので、`status = DRAFT` は全件に一致する
+    /// — 案件Aの2件のうち片方を確定させ、`status = DRAFT` がそれを除外する
+    /// ことを確認する。
+    #[tokio::test]
+    async fn project_filter_combines_with_an_ordinary_column_filter() {
+        let f = project_filter_fixture().await;
+        f.invoices
+            .issue(f.invoice_a)
+            .await
+            .expect("issue invoice a");
+
+        let params = ListParams {
+            filters: vec![
+                project_id_filter(f.project_a),
+                FilterState {
+                    field: "status".to_string(),
+                    op: FilterOp::Eq,
+                    value: serde_json::json!(STATUS_DRAFT),
+                },
+            ],
+            ..Default::default()
+        };
+        let result = f.invoices.list(params).await.expect("list");
+        // 案件Aの請求書は invoice_a（確定済み）と invoice_ab（Draft）の2件
+        // だが、status = DRAFT を重ねると invoice_ab だけが残る。
+        assert_eq!(result.total_count, 1);
+        assert_eq!(result.rows[0].id, f.invoice_ab);
+    }
+
+    /// `eq` 以外の演算子は BadRequest（等価以外は対応しない仕様）。
+    #[tokio::test]
+    async fn project_filter_rejects_a_non_eq_operator() {
+        let f = project_filter_fixture().await;
+        let params = ListParams {
+            filters: vec![FilterState {
+                field: "projectId".to_string(),
+                op: FilterOp::Gt,
+                value: serde_json::json!(f.project_a),
+            }],
+            ..Default::default()
+        };
+        let err = f.invoices.list(params).await.unwrap_err();
+        assert!(matches!(err, BantoError::BadRequest(_)), "{err:?}");
+    }
+
+    /// 整数として解釈できない値も BadRequest（文字列・小数混じり等）。
+    #[tokio::test]
+    async fn project_filter_rejects_a_non_integer_value() {
+        let f = project_filter_fixture().await;
+        let params = ListParams {
+            filters: vec![FilterState {
+                field: "projectId".to_string(),
+                op: FilterOp::Eq,
+                value: serde_json::json!("not-a-number"),
+            }],
+            ..Default::default()
+        };
+        let err = f.invoices.list(params).await.unwrap_err();
+        assert!(matches!(err, BantoError::BadRequest(_)), "{err:?}");
+    }
+
+    /// `projectId` フィルタを複数指定するのも不正（単一条件のみ許可）。
+    #[tokio::test]
+    async fn project_filter_rejects_more_than_one_condition() {
+        let f = project_filter_fixture().await;
+        let params = ListParams {
+            filters: vec![
+                project_id_filter(f.project_a),
+                project_id_filter(f.project_b),
+            ],
+            ..Default::default()
+        };
+        let err = f.invoices.list(params).await.unwrap_err();
+        assert!(matches!(err, BantoError::BadRequest(_)), "{err:?}");
     }
 }
