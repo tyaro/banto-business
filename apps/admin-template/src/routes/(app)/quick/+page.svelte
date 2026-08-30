@@ -268,14 +268,7 @@
 						</button>
 					{/each}
 				</div>
-				<input
-					class="banto-input"
-					type="number"
-					step="0.5"
-					min="0.5"
-					max="24"
-					bind:value={hours}
-				/>
+				<input class="banto-input" type="number" step="0.5" min="0.5" max="24" bind:value={hours} />
 			</div>
 
 			<label class="field">

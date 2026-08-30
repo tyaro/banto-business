@@ -118,9 +118,7 @@ async function fillCustomerForm(page: Page, code: string, name: string): Promise
  * 衝突しないのでその迂回は不要。）
  */
 async function openRowAndGetId(page: Page, text: string, resource: string): Promise<number> {
-	await rowWithText(page, text)
-		.getByRole('link', { name: '開く ›' })
-		.click();
+	await rowWithText(page, text).getByRole('link', { name: '開く ›' }).click();
 	await expect(page).toHaveURL(new RegExp(`/${resource}/\\d+$`));
 	const id = Number(page.url().split('/').pop());
 	expect(Number.isInteger(id)).toBe(true);
