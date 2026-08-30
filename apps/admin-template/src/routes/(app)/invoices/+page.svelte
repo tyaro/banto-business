@@ -23,6 +23,7 @@
 	import { sessionStore } from '$lib/session.svelte';
 	import { canWriteResources } from '$lib/permissions';
 	import PageHeader from '$lib/components/ui/PageHeader.svelte';
+	import { projectOptions, loadProjectOptions } from '$lib/banto/referenceOptions.svelte';
 
 	interface InvoiceRow {
 		id: number;
@@ -56,7 +57,13 @@
 	// 列は手書き。スキーマ由来の `columnsFromSchema` を使わないのは、このリソース
 	// がフォームスキーマを持たないため（上の doc コメント参照）。
 	const baseColumns: GridColumn<InvoiceRow>[] = [
-		{ id: 'open', header: m['resource.colActions'](), accessor: () => '', width: 80 },
+		{
+			id: 'open',
+			header: m['resource.colActions'](),
+			accessor: () => '',
+			cell: (row) => ({ text: m['resource.openRow'](), href: `${base}/invoices/${row.id}` }),
+			width: 80
+		},
 		{
 			id: 'invoiceNumber',
 			header: m['invoices.fieldInvoiceNumber'](),
@@ -110,6 +117,25 @@
 
 	let visibleRange = { start: 0, end: 100 };
 
+	/**
+	 * 案件での絞り込み（アルファ実機フィードバック）。
+	 *
+	 * `Invoice` は `project_id` を持たない（`CLAUDE.md` 1.3）ので、これは
+	 * `invoices` の実カラムではなく擬似フィルタ —— サーバ側
+	 * （`core/src/invoices.rs::list`）が `projectId` を受けたときだけ、
+	 * その案件の明細を1行でも含む請求書に絞る特別扱いをする。
+	 *
+	 * `BantoGrid` の `onParamsChange` は毎回 `filters` を丸ごと差し替えて
+	 * 渡してくる（グリッド側の列フィルタ変更のたび）ので、直近のグリッド
+	 * パラメータを覚えておき、案件セレクトの変更時にもそれへ合成し直す。
+	 */
+	let selectedProjectId = $state<number | null>(null);
+	let lastGridParams: { sort: SortState[]; filters: FilterState[] } = { sort: [], filters: [] };
+
+	$effect(() => {
+		void loadProjectOptions();
+	});
+
 	$effect(() => {
 		void windowed.ensureRange(0, 100);
 	});
@@ -118,9 +144,23 @@
 		return () => windowed.dispose();
 	});
 
-	function handleParamsChange(params: { sort: SortState[]; filters: FilterState[] }): void {
-		windowed.setParams(params);
+	function applyParams(params: { sort: SortState[]; filters: FilterState[] }): void {
+		const filters =
+			selectedProjectId === null
+				? params.filters
+				: [...params.filters, { field: 'projectId', op: 'eq' as const, value: selectedProjectId }];
+		windowed.setParams({ sort: params.sort, filters });
 		void windowed.ensureRange(visibleRange.start, visibleRange.end);
+	}
+
+	function handleParamsChange(params: { sort: SortState[]; filters: FilterState[] }): void {
+		lastGridParams = params;
+		applyParams(params);
+	}
+
+	function handleProjectFilterChange(rawValue: string): void {
+		selectedProjectId = rawValue === '' ? null : Number(rawValue);
+		applyParams(lastGridParams);
 	}
 
 	function handleVisibleRangeChange(range: { start: number; end: number }): void {
@@ -144,6 +184,23 @@
 			{/if}
 		{/snippet}
 	</PageHeader>
+
+	<div class="filter-bar">
+		<label class="filter-field" for="invoice-project-filter">
+			<span>{m['invoices.filterProjectLabel']()}</span>
+			<select
+				id="invoice-project-filter"
+				class="banto-input"
+				value={selectedProjectId === null ? '' : String(selectedProjectId)}
+				onchange={(event) => handleProjectFilterChange(event.currentTarget.value)}
+			>
+				<option value="">{m['invoices.filterAllProjects']()}</option>
+				{#each projectOptions() as option (option.value)}
+					<option value={String(option.value)}>{option.label}</option>
+				{/each}
+			</select>
+		</label>
+	</div>
 
 	<div class="grid-panel">
 		<BantoGrid
@@ -169,6 +226,24 @@
 		flex-direction: column;
 		gap: 1rem;
 		height: 100%;
+	}
+
+	.filter-bar {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: flex-end;
+		gap: 0.75rem;
+	}
+
+	.filter-field {
+		display: flex;
+		flex-direction: column;
+		gap: 0.25rem;
+		min-width: 0;
+		width: 100%;
+		max-width: 20rem;
+		font-size: 0.85rem;
+		color: var(--banto-text-muted);
 	}
 
 	.grid-panel {

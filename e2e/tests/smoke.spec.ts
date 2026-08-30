@@ -107,14 +107,18 @@ async function fillCustomerForm(page: Page, code: string, name: string): Promise
 /**
  * グリッドの行から詳細画面を開き、その id を返す。
  *
- * インライン編集できる列を持つグリッド（= editor 以上で開いた業務一覧）では、
- * 単クリックはセル選択で、`onRowClick` は**ダブルクリック**でしか発火しない
- * （BantoGrid.svelte の `handleCellClick` / `handleCellDoubleClick`）。編集可能な
- * セルをダブルクリックすると編集が始まってしまうので、先頭の操作列（空・
- * 編集不可）を狙う。
+ * 先頭の操作列は `column.cell` でリンク化されている（「開く ›」/
+ * `resource.openRow`、アルファ実機フィードバックの UI 改善A）。実体は
+ * `<a href>` なので普通の単クリックで遷移する — dblclick で一度目の
+ * クリックが先にナビゲーションを起こし、二度目のイベントが遷移後の
+ * DOM に当たって落ちる、という事故を避けるため単クリックにしている。
+ * （旧実装は操作列が空セルだったため、インライン編集と衝突しないよう
+ * `onRowClick` のダブルクリック発火を頼っていた — BantoGrid.svelte の
+ * `handleCellClick` / `handleCellDoubleClick`。リンク化後は編集セルと
+ * 衝突しないのでその迂回は不要。）
  */
 async function openRowAndGetId(page: Page, text: string, resource: string): Promise<number> {
-	await rowWithText(page, text).getByRole('gridcell').first().dblclick();
+	await rowWithText(page, text).getByRole('link', { name: '開く ›' }).click();
 	await expect(page).toHaveURL(new RegExp(`/${resource}/\\d+$`));
 	const id = Number(page.url().split('/').pop());
 	expect(Number.isInteger(id)).toBe(true);

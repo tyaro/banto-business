@@ -47,6 +47,7 @@
 			id: 'open',
 			header: m['resource.colActions'](),
 			accessor: () => '',
+			cell: (row) => ({ text: m['resource.openRow'](), href: `${base}/trips/${row.id}` }),
 			width: 80,
 			editable: false
 		},
