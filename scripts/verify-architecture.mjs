@@ -23,6 +23,11 @@
  *      片側だけが正しい場合は DESKTOP_ONLY（OS 統合で REST を持たない Tauri
  *      コマンド）/ SERVER_ONLY（相手端末の受け口で Tauri を持たない REST
  *      ルート）に分類する。maintainability-review-2026-07.md CR-1
+ *      (f) TauriDataProvider の getList 契約 … TAURI_READ のうち `_list` の
+ *      Tauri コマンド（独自 invoke 経路の users/backups/sync_conflicts/
+ *      attachments を除く）が `params: ListParams` を受け `ListResult<...>` を
+ *      返しているか。違反すると Tauri IPC 経路だけ一覧読み取りが静かに失敗する
+ *      （実機障害の再発防止。docs/android-build.md 8.7）
  *   9. §6 セキュリティ不変条件（grep 可能なもの、CR-2）:
  *      NewAttachment に mime フィールド無し / settings_get·set は Admin 対称
  *  10. §13 app 層コンポーネントに生の日本語リテラルが無い
@@ -607,6 +612,72 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 					`ロール床の非対称/不一致 \`${tauri}\` ⇔ \`${rest}\`: 期待=${role} / Tauri=${tr ?? '不明'} / REST=${rr ?? '不明'}（§1 両経路で同一の認可、CR-6）`
 				);
 		}
+
+		// (f) TauriDataProvider の getList 契約（packages/admin-core/src/providers/
+		// tauri.ts）: `getList(resource, params)` は `${resource}_list` コマンドに
+		// `{ params }` を渡し、`ListResult`（TS 側 `{ rows, totalCount }`）が返る
+		// 前提で動く。この契約に違反し裸の配列を返すコマンドがあると、Tauri IPC
+		// 経路だけで一覧読み取りが静かに失敗する（フロントの `result.rows` が
+		// undefined になり catch へ落ちる）。実機で起きた事件は
+		// docs/android-build.md 8.7 参照 — `work_categories_list` がこの契約に
+		// 違反し裸の `Vec<WorkCategory>` を返していたため、原価レート画面と
+		// クイック入力の作業分類一覧が Tauri IPC 経路でだけ失敗した。REST 側
+		// （`rest/masters.rs`）は正しく `ListResult` で包んでいたため、
+		// ブラウザ経由の切り分けでは再現せず気づけなかった。E2E は
+		// banto-serve（REST）経路しか通らないため、この違反を検出できなかった。
+		//
+		// 対象は上の TAURI_READ のうち `_list` で終わるコマンド（= DataProvider
+		// 経由と分かっている読み取り系）。ただし `users_list` / `backups_list` /
+		// `sync_conflicts_list` / `attachments_list` は DataProvider を経由しない
+		// 独自 invoke 経路（`usersAdmin.ts` 等が配列を直接期待）なので Vec 返しが
+		// 正しく、対象から除く（`sync_conflicts_list` は DESKTOP_ONLY 側なので
+		// そもそも TAURI_READ には現れない）。新しいハードコードのリストは作らず
+		// 既存の TAURI_READ から導出する。
+		const contractRule = 'getlist-contract';
+		const INDEPENDENT_INVOKE_LIST = new Set([
+			'users_list',
+			'backups_list',
+			'sync_conflicts_list',
+			'attachments_list'
+		]);
+		const getListResources = [...TAURI_READ]
+			.filter((cmd) => cmd.endsWith('_list') && !INDEPENDENT_INVOKE_LIST.has(cmd))
+			.sort();
+		for (const cmd of getListResources) {
+			// シグネチャが複数行に渡る想定で、`async fn 名(` から最初の `{`
+			// （関数本体の開始）までを丸ごと対象にする。
+			const sigM = libSrc.match(new RegExp(`async fn ${cmd}\\s*\\(([\\s\\S]*?)\\{`));
+			if (!sigM) {
+				fail(
+					contractRule,
+					tauriLib,
+					`\`${cmd}\` の関数シグネチャが見つからない（async fn 前提が崩れた — 検査を更新）`
+				);
+				continue;
+			}
+			const sig = sigM[1];
+			const hasParams = /\b_?params\s*:\s*ListParams\b/.test(sig);
+			const hasListResult = /ListResult</.test(sig);
+			if (!hasParams || !hasListResult) {
+				const missing = [
+					!hasParams && '引数に `params: ListParams`（または `_params`）が無い',
+					!hasListResult && '戻り値に `ListResult<...>` が無い（裸の配列等を返している）'
+				]
+					.filter(Boolean)
+					.join(' / ');
+				fail(
+					contractRule,
+					tauriLib,
+					`\`${cmd}\` が TauriDataProvider の getList 契約（params: ListParams を受け ListResult を返す）に違反: ${missing}` +
+						`（実機障害の再発防止 — docs/android-build.md 8.7 参照）`
+				);
+			}
+		}
+		if (!results.some((r) => r.includes(`[${contractRule}]`)))
+			pass(
+				contractRule,
+				`getList 経由の Tauri _list コマンド ${getListResources.length} 件が ListParams/ListResult 契約どおり`
+			);
 	}
 
 	if (!results.some((r) => r.includes(`[${rule}]`)))

@@ -324,9 +324,14 @@ fn ping() -> &'static str {
 // 読み取りは Viewer で通し、両経路とも監査しない。
 
 #[tauri::command]
-async fn work_categories_list(state: State<'_, AppState>) -> Result<Vec<WorkCategory>, BantoError> {
+async fn work_categories_list(
+    state: State<'_, AppState>,
+    _params: ListParams,
+) -> Result<ListResult<WorkCategory>, BantoError> {
     require_role(&state, Role::Viewer, "work-categories").await?;
-    state.masters.list_work_categories().await
+    let rows = state.masters.list_work_categories().await?;
+    let total_count = rows.len() as u64;
+    Ok(ListResult { rows, total_count })
 }
 
 #[tauri::command]

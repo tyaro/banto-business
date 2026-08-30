@@ -479,37 +479,75 @@ GitHub の画面から行う）。
 - Rust 側のロジック・SQLite の DB・データそのものは正常
 - 障害は WebView ↔ Kotlin の Tauri IPC ブリッジに限定される
 
-ことが分かる。また `android-build.yml` が作る `--debug` ビルドでは再現
-しない。
+ことが分かる。「`android-build.yml` が作る `--debug` ビルドでは再現
+しない」とも考えていたが、これは**実機で確かめていない思い込み**だった
+（真因はビルド種別と無関係なので、debug ビルドでも再現するはず。下記
+「実際の原因」参照）。この思い込みが「release だけ壊れる → minify」と
+いう誤った推定に直結した。
 
-**原因（推定）:** Tauri CLI（2.11.4）が `tauri android init` で生成する
-`gen/android/app/build.gradle.kts` は、**release buildType のみ**
+**当初の推定（誤り）:** Tauri CLI（2.11.4）が `tauri android init` で生成
+する `gen/android/app/build.gradle.kts` は、**release buildType のみ**
 `isMinifyEnabled = true` と `getDefaultProguardFile("proguard-android-optimize.txt")`
 （R8 最適化）を有効にしている。アプリ側の `proguard-rules.pro` に対応する
 keep ルールは無く実質空のため、R8 が Tauri IPC ブリッジの一部クラス・
 メソッドを最適化・除去し、一覧読み取り経路だけが選択的に壊れていると
-見ている。「debug では動くが release の Android だけ壊れ、minify を
-無効化すると直る」は Tauri で知られたパターンで、今回の症状と一致する。
+見ていた。「debug では動くが release の Android だけ壊れ、minify を
+無効化すると直る」は Tauri で知られたパターンで、今回の症状と一致する
+ように見えたが、**これは誤りだったことが alpha.3 で判明した**。
+`android-release.yml` で minify を無効化した状態（下記）でビルドした
+alpha.3 でも同じ症状（原価レート画面の読み込み失敗、クイック入力の
+作業分類が空）が再現し、minify は原因から除外された。
 
-**対処:** `android-release.yml` に、`tauri android init` 直後
-（release APK のビルド前）で `gen/android/app/build.gradle.kts` の
+**実際の原因:** Tauri コマンド `work_categories_list`
+（`apps/admin-template/src-tauri/src/lib.rs`）が `TauriDataProvider` の
+`getList` 契約（`packages/admin-core/src/providers/tauri.ts`: `${resource}_list`
+コマンドは `{ params }` を受け `ListResult`（`{ rows, totalCount }`）を
+返す）に違反し、`params` を受けず裸の `Vec<WorkCategory>` を返していた。
+REST 側（`core/src/rest/masters.rs`）は同じ `work_categories_list` を
+正しく `ListResult { rows, total_count }` で包んで返していたため、
+組み込み LAN サーバー経由（切り分けで使ったブラウザアクセス）では正常
+に読め、「Rust 側のロジック・DB は正常」という誤った手がかりを与えた。
+壊れていたのは Tauri IPC 経路（`invoke()`）だけで、フロントは
+`result.rows` が `undefined` になり catch へ落ちていた（原価レート
+画面 `src/routes/(app)/cost-rates/+page.svelte` の `load()` は
+`failed = true`、クイック入力 `src/lib/banto/referenceOptions.svelte.ts`
+の `loadWorkCategoryOptions` は空配列を返す）。E2E は banto-serve
+（REST）経路しか通らないため、Tauri IPC 経路限定のこの違反を検出
+できなかった。**修正版は v0.1.0-alpha.4。**
+
+**minify 無効化の位置づけ:** `android-release.yml` に、`tauri android init`
+直後（release APK のビルド前）で `gen/android/app/build.gradle.kts` の
 `isMinifyEnabled = true` を `isMinifyEnabled = false` へ置き換えるステップ
-を追加した（v0.1.0-alpha.2〜）。`gen/android` は 4.1 / 7.4 節のとおり
-`.gitignore` 済みの生成物で CI が毎回作り直すため、**ワークフロー内で
-init 直後にパッチを当てるのが唯一の介入点**であり、リポジトリに
-`gen/android` を持ち込む判断はしていない。
+は v0.1.0-alpha.2〜引き続き入っている。`gen/android` は 4.1 / 7.4 節の
+とおり `.gitignore` 済みの生成物で CI が毎回作り直すため、**ワーク
+フロー内で init 直後にパッチを当てるのが唯一の介入点**である。
 
 置換対象の文字列が見つからない場合（Tauri CLI のテンプレートが変わった
 場合）は、minify が有効なまま黙ってビルドを続けず、そのステップを fail
 させる設計にしてある。
 
+上記のとおり minify は**結果的に今回の原因ではなかった**が、無効化は
+アルファの間そのまま維持する。理由は次の2点で、真因の修正（alpha.4）
+とは独立の判断:
+
+1. 原因切り分け中の変数を減らす（原因不明の障害を追っている間に、
+   もう一つの既知の不確定要素を持ち込まない）
+2. Tauri および使用している plugin 向けの keep ルール
+   （`proguard-rules.pro`）が未整備のまま R8 最適化を有効化するリスクを
+   避ける — 今回のように「特定の読み取り経路だけ壊れる」類の障害を
+   自ら作り込みかねない
+
 アルファは自己配布（ストアを経由せず自分の端末へ直接入れる）なので、
 minify を無効化した分の APK サイズ増は許容している。
 
-**将来:** minify（R8/ProGuard）を再度有効化するなら、Tauri および使用
-している plugin 向けの keep ルール（`proguard-rules.pro`）を先に整備する
-ことが前提になる。アルファの間はサイズ増を許容して無効のままとし、この
-対応はしない。
+**将来:** minify（R8/ProGuard）を再度有効化するなら、上記 keep ルール
+の整備が前提になる。アルファの間はサイズ増を許容して無効のままとし、
+この対応はしない。
+
+**再発防止:** `scripts/verify-architecture.mjs` に、DataProvider の
+`getList` で読まれるリソースの Tauri `_list` コマンドが `ListParams` を
+受け `ListResult<...>` を返しているかを機械検査するルールを追加した
+（CI で強制。違反があれば exit 非0 で落ちる）。
 
 #### v0.1.0-alpha.2: データ入りDBで起動即クラッシュする
 
