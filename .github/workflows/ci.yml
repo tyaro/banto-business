@@ -350,7 +350,7 @@ jobs:
       # binaries instead of compiling from source, which would otherwise
       # add several minutes to this job.
       - name: Install cargo-audit
-        uses: taiki-e/install-action@91ddec75689c4c78665b598d188dc821c5a43e5c # v2.85.9
+        uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
         with:
           tool: cargo-audit
 
